@@ -1,0 +1,10 @@
+galaxy_info:
+  role_name: caddy
+  author: zied
+  description: Install Caddy + Caddy security
+  company: Agir Collectif
+
+  min_ansible_version: 2.2
+
+  platforms:
+    - name: CentOS

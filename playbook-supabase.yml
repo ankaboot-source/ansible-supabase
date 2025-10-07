@@ -1,0 +1,14 @@
+
+- hosts: localhost
+  roles:
+   - common
+   - ssh
+   - sudo
+   - ssh-keys
+   - fail2ban
+   - kinsing
+   - firewall
+   - docker
+   - supabase
+   - caddy
+   - gitlab-runner
