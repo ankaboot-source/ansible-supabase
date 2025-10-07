@@ -1,0 +1,159 @@
+############
+# Secrets
+# YOU MUST CHANGE THESE BEFORE GOING INTO PRODUCTION
+############
+
+POSTGRES_PASSWORD={{ postgres_db_pwd }}
+JWT_SECRET={{ sb_jwt_secret }}
+ANON_KEY={{ sb_anon_key }}
+SERVICE_ROLE_KEY={{ sb_service_role_key }}
+DASHBOARD_USERNAME=
+DASHBOARD_PASSWORD=
+SECRET_KEY_BASE={{ secret_key_base }}
+VAULT_ENC_KEY=your-encryption-key-32-chars-min
+
+############
+# Database - You can change these to any PostgreSQL database that has logical replication enabled.
+############
+
+POSTGRES_HOST=db
+POSTGRES_DB=postgres
+POSTGRES_PORT=5432
+# default user is postgres
+
+
+############
+# Supavisor -- Database pooler
+############
+
+POOLER_PROXY_PORT_TRANSACTION=6543
+POOLER_DEFAULT_POOL_SIZE=20
+POOLER_MAX_CLIENT_CONN=100
+POOLER_TENANT_ID=your-tenant-id
+POOLER_DB_POOL_SIZE=5
+
+############
+# API Proxy - Configuration for the Kong Reverse proxy.
+############
+
+KONG_HTTP_PORT=8000
+KONG_HTTPS_PORT=8443
+
+
+############
+# API - Configuration for PostgREST.
+############
+
+PGRST_DB_SCHEMAS=private,storage,graphql_public
+
+
+############
+# Auth - Configuration for the GoTrue authentication server.
+############
+
+## General
+SITE_URL={{ site_url }}
+ADDITIONAL_REDIRECT_URLS=
+JWT_EXPIRY=3600
+DISABLE_SIGNUP=false
+API_EXTERNAL_URL={{ api_external_url }}
+
+## Mailer Config
+MAILER_URLPATHS_CONFIRMATION="/auth/v1/verify"
+MAILER_URLPATHS_INVITE="/auth/v1/verify"
+MAILER_URLPATHS_RECOVERY="/auth/v1/verify"
+MAILER_URLPATHS_EMAIL_CHANGE="/auth/v1/verify"
+
+# UPDATE THE MAILER PART ACCORDINGLY
+MAILER_SUBJECTS_INVITE="{% raw %}{{.Data.EmailTemplate.Invite.Title}}{% endraw %}"
+MAILER_SUBJECTS_CONFIRMATION="{% raw %}{{.Data.EmailTemplate.Confirmation.Title}}{% endraw %}"
+MAILER_SUBJECTS_RECOVERY="{% raw %}{{.Data.EmailTemplate.Recovery.Title}}{% endraw %}"
+MAILER_SUBJECTS_EMAIL_CHANGE="{% raw %}{{.Data.EmailTemplate.EmailChange.Title}}{% endraw %}"
+
+MAILER_TEMPLATES_RECOVERY={{ api_external_url }}/storage/v1/object/public/templates/reset_password.html
+MAILER_TEMPLATES_CONFIRMATION={{ api_external_url }}/storage/v1/object/public/templates/email_confirmation.html
+MAILER_TEMPLATES_EMAIL_CHANGE={{ api_external_url }}/storage/v1/object/public/templates/email_change.html
+MAILER_TEMPLATES_INVITE={{ api_external_url }}/storage/v1/object/public/templates/email_invite.html
+
+## Password Check
+PASSWORD_MIN_LENGTH=12
+PASSWORD_REQUIRED_CHARACTERS=abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!"#$%&'()*+,-./;<=>?@[\]^_`{|}~
+## Email auth
+ENABLE_EMAIL_SIGNUP=true
+ENABLE_EMAIL_AUTOCONFIRM=false
+SMTP_ADMIN_EMAIL={{ smtp_admin_email }}
+SMTP_HOST={{ smtp_host }}
+SMTP_PORT={{ smtp_port }}
+SMTP_USER={{ smtp_user }}
+SMTP_PASS={{ smtp_password }}
+SMTP_SENDER_NAME={{ smtp_sender_name }}
+ENABLE_ANONYMOUS_USERS=false
+
+## Phone auth
+ENABLE_PHONE_SIGNUP=true
+ENABLE_PHONE_AUTOCONFIRM=true
+
+
+############
+# Studio - Configuration for the Dashboard
+############
+
+STUDIO_DEFAULT_ORGANIZATION=Default Organization
+STUDIO_DEFAULT_PROJECT=Default Project
+
+STUDIO_PORT=3000
+# replace if you intend to use Studio outside of localhost
+SUPABASE_PUBLIC_URL={{ api_external_url }}
+
+# Enable webp support
+IMGPROXY_ENABLE_WEBP_DETECTION=true
+
+############
+# Functions - Configuration for Functions
+############
+# NOTE: VERIFY_JWT applies to all functions. Per-function VERIFY_JWT is not supported yet.
+FUNCTIONS_VERIFY_JWT=false
+
+############
+# Logs - Configuration for Logflare
+# Please refer to https://supabase.com/docs/reference/self-hosting-analytics/introduction
+############
+
+LOGFLARE_LOGGER_BACKEND_API_KEY=your-super-secret-and-long-logflare-key
+LOGFLARE_PUBLIC_ACCESS_TOKEN=your-super-secret-and-long-logflare-key-public
+LOGFLARE_PRIVATE_ACCESS_TOKEN=your-super-secret-and-long-logflare-key-private
+# Change vector.toml sinks to reflect this change
+LOGFLARE_HTTP_PORT=4001
+
+# Docker socket location - this value will differ depending on your OS
+DOCKER_SOCKET_LOCATION=/var/run/docker.sock
+
+# Change vector.toml sources.docker_syslog to reflect this change
+VECTOR_PORT=9000
+VECTOR_API_PORT=9001
+
+# Google Cloud Project details
+GOOGLE_PROJECT_ID=GOOGLE_PROJECT_ID
+GOOGLE_PROJECT_NUMBER=GOOGLE_PROJECT_NUMBER
+
+#REDIRECT_URI
+REDIRECT_URI={{ api_external_url }}/auth/v1/callback
+
+#GOOGLE_AUTH
+ENABLE_GOOGLE_SIGNUP=true
+GOOGLE_CLIENT_ID={{ google_client_id }}
+GOOGLE_SECRET={{ google_secret }}
+
+#AZURE_AUTH
+ENABLE_AZURE_SIGNUP=true
+AZURE_CLIENT_ID={{ azure_client_id }}
+AZURE_SECRET={{ azure_secret }}
+
+## Auth Hook
+GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED=true
+GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI="pg-functions://postgres/private/custom_access_token_hook"
+
+GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED=true
+
+##OpenAI
+OPENAI_API_KEY={{ openai_api_key }}
