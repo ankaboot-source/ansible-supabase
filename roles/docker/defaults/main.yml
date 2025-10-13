@@ -1,0 +1,7 @@
+docker_compose_version: 1.29.2
+docker_users: []
+log_max_size: 10m
+log_max_file: 3
+docker_dns: []
+containers_to_destroy: []
+docker_disable_iptables: false

@@ -1,7 +1,7 @@
 galaxy_info:
-  role_name: caddy
-  author: zied
-  description: Install Caddy + Caddy security
+  role_name: docker
+  author: raselkarnit
+  description: Install and configure docker server
   company: ankaboot.io
 
   min_ansible_version: 2.2

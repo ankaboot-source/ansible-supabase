@@ -1,7 +1,9 @@
 ---
 
 #COMMON
-deploy_user: ansible-supabase
+deploy_user: changeit
+docker_users:
+  - changeit # same as deploy_user
 
 #SUPABASE
 supabase_path: supabase/docker

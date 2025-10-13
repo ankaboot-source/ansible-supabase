@@ -61,9 +61,24 @@
   with_items:
     - { src: "caddy.service", dest: "/usr/lib/systemd/system/caddy.service", mode: '0644' }
 
-- name: Restore SELinux context for /usr/bin/caddy
-  ansible.builtin.command: restorecon -v /usr/bin/caddy
-  when: ansible_selinux.status == "enabled"
+
+- name: Ensure /var/log/caddy directory exists
+  ansible.builtin.file:
+    path: /var/log/caddy
+    state: directory
+    mode: "0755"
+    owner: caddy
+    group: caddy
+  become: true
+
+- name: Ensure /etc/caddy directory exists
+  ansible.builtin.file:
+    path: /etc/caddy
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  become: true
 
 - name: Copy Caddyfile to /etc/caddy
   become: true

@@ -2,7 +2,7 @@ galaxy_info:
   role_name: supabase
   author: zied
   description: Install Supabase
-  company: Agir Collectif
+  company: ankaboot.io
 
   min_ansible_version: 2.2
 

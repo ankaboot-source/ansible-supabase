@@ -7,7 +7,7 @@
 - name: Clone Supabase
   ansible.builtin.git:
     repo: https://github.com/supabase/supabase
-    dest: "/home/{{ deploy_user }}"
+    dest: "/home/{{ deploy_user }}/supabase"
     depth: 1
   when: not supabase_dir.stat.exists
 
