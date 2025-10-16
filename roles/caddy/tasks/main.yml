@@ -50,6 +50,34 @@
     shell: /usr/sbin/nologin
     create_home: no
 
+- name: Add caddy user to www-data group
+  become: true
+  ansible.builtin.user:
+    name: caddy
+    groups: www-data
+    append: yes
+
+- name: Ensure /var/lib/caddy directory exist
+  become: true
+  ansible.builtin.file:
+    path: /var/lib/caddy
+    state: directory
+    mode: "0750"
+    owner: caddy
+    group: caddy
+
+- name: Ensure Caddy runtime subdirectories exist
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+    owner: caddy
+    group: caddy
+  loop:
+    - /var/lib/caddy/.local/share/caddy
+    - /var/lib/caddy/.config/caddy
+
 - name: Create Caddy systemd service
   become: true
   template:
@@ -60,7 +88,6 @@
     group: root
   with_items:
     - { src: "caddy.service", dest: "/usr/lib/systemd/system/caddy.service", mode: '0644' }
-
 
 - name: Ensure /var/log/caddy directory exists
   ansible.builtin.file:
@@ -83,13 +110,11 @@
 - name: Copy Caddyfile to /etc/caddy
   become: true
   template:
-    src: "{{ item.src }}.j2"
-    dest: "{{ item.dest }}"
-    mode: "{{ item.mode }}"
+    src: "Caddyfile-{{ SSO_PROVIDER }}.j2"
+    dest: "/etc/caddy/Caddyfile"
+    mode: "0644"
     owner: root
     group: root
-  with_items:
-    - { src: "Caddyfile", dest: "/etc/caddy/Caddyfile", mode: '0644' }
 
 - name: Reload systemd and start Caddy
   become: true

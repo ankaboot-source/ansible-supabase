@@ -8,9 +8,9 @@
 			driver gitlab
 			domain_name {{ gitlab_domain }}
 			client_id {{ gitlab_oauth_client_id }} 
-			client_secret {{ gitlab_oauth_secret }}
+			client_secret {{ gitlab_oauth_client_secret }}
 			scopes openid email profile
-			{% for gf in caddy_group_filters %}
+			{% for gf in gitlab_group_filters %}
 			user_group_filters {{ gf }}
 			{% endfor %}
 
@@ -29,7 +29,7 @@
 
 			transform user {
 				match realm gitlab
-				match email {{ caddy_allow_list }}
+				match email {{ gitlab_allow_list }}
 				action add role authp/admin
 			}
 		}
@@ -62,10 +62,10 @@ https://{{ cfg.domain }} {
     {% endfor %}
 
     {% if cfg.secure %}
-	handle /auth* {
-		authenticate with myportal
-	}	
-	{% endif %}
+    handle /auth* {
+        authenticate with myportal
+    }	
+    {% endif %}
 
     handle {
         {% if cfg.secure %}
