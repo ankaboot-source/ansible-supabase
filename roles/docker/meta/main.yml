@@ -1,0 +1,10 @@
+galaxy_info:
+  role_name: docker
+  author: raselkarnit
+  description: Install and configure docker server
+  company: ankaboot.io
+
+  min_ansible_version: 2.2
+
+  platforms:
+    - name: Ubuntu

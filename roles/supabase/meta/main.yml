@@ -1,0 +1,10 @@
+galaxy_info:
+  role_name: supabase
+  author: zied
+  description: Install Supabase
+  company: ankaboot.io
+
+  min_ansible_version: 2.2
+
+  platforms:
+    - name: CentOS

@@ -1,0 +1,77 @@
+{
+	order authenticate before respond
+	order authorize before basicauth
+
+	security {
+		oauth identity provider gitlab {
+			realm gitlab
+			driver gitlab
+			domain_name {{ gitlab_domain }}
+			client_id {{ gitlab_oauth_client_id }} 
+			client_secret {{ gitlab_oauth_client_secret }}
+			scopes openid email profile
+			{% for gf in gitlab_group_filters %}
+			user_group_filters {{ gf }}
+			{% endfor %}
+
+		}
+
+		authentication portal myportal {
+			crypto default token lifetime 3600
+			crypto key sign-verify {env.JWT_SHARED_KEY}
+			enable identity provider gitlab
+			cookie domain {{ domain }}
+			ui {
+				links {
+					"My Identity" "/whoami" icon "las la-user"
+				}
+			}
+
+			transform user {
+				match realm gitlab
+				match email {{ gitlab_allow_list }}
+				action add role authp/admin
+			}
+		}
+
+		authorization policy mypolicy {
+			set auth url https://{{ domain }}/auth/oauth2/gitlab
+			crypto key verify {env.JWT_SHARED_KEY}
+			allow roles authp/admin
+			validate bearer header
+			inject headers with claims
+		}
+	}
+}
+
+{% for project, cfg in projects.items() %}
+https://{{ cfg.domain }} {
+
+    log {
+        output file /var/log/caddy/{{cfg.log_file}}.log {
+            roll_size 10MiB
+            roll_keep 10
+            roll_keep_for 24h
+        }
+    }
+	
+    {% for path in cfg.paths %}
+    handle {{ path }} {
+        reverse_proxy {{ cfg.backend }}
+    }
+    {% endfor %}
+
+    {% if cfg.secure %}
+    handle /auth* {
+        authenticate with myportal
+    }	
+    {% endif %}
+
+    handle {
+        {% if cfg.secure %}
+        authorize with mypolicy
+        {% endif %}
+        reverse_proxy {{ cfg.frontend }}
+    }
+}
+{% endfor %}

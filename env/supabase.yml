@@ -1,0 +1,89 @@
+---
+
+#COMMON
+deploy_user: changeit # your sudo user
+docker_users:
+  - changeit # same as deploy_user
+
+#SUPABASE
+supabase_path: supabase/docker
+kong_conf_path: volumes/api
+
+postgres_db_pwd: changeit
+
+#Refer to https://supabase.com/docs/guides/self-hosting/docker to generate jwt, anon and service role keys
+sb_jwt_secret: changeit
+sb_anon_key: changeit
+sb_service_role_key: changeit
+secret_key_base: UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq
+
+site_url: https://app.example.com # website url
+api_external_url: https://supa.example.com #supabase studio url
+
+smtp_admin_email: user@example.com
+smtp_host: mail.example.com
+smtp_port: 587
+smtp_user: user@example.com
+smtp_password: changeit
+smtp_sender_name: changeit
+
+google_client_id: changeit
+google_secret: changeit
+
+azure_client_id: changeit
+azure_secret: changeit
+
+openai_api_key: changeit
+
+
+#CADDY
+SSO_PROVIDER: github # available: github, gitlab & discord
+
+##Gitlab #https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0009-gitlab
+gitlab_domain: gitlab.example.com
+gitlab_oauth_client_id: changeit
+gitlab_oauth_client_secret: changeit
+gitlab_allow_list: "user1@example.com user2@example.com" #SSO allow list
+gitlab_group_filters:
+  - group1
+  - ^a #all groups starting with a
+
+##GitHub #https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0007-github
+github_oauth_client_id: changeit
+github_oauth_client_secret: changeit
+github_allow_list: "github.com/user1 github.com/user2"
+
+##Discord #https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0013-discord
+discord_oauth_client_id: changeit
+discord_oauth_client_secret: changeit
+admin_role_id: changeit # your admin user ID
+discord_guild_id: changeit # your Discord server ID
+
+#### Common vars between Gitlab, GitHub & Discord
+domain: supa.example.com #domain or sub-domain where you will serve you supabase instance
+
+
+
+# set paths to [] if you don’t want to handle any path outside of SSO protection 
+# set secure: false to disable Gitlab SSO
+projects:
+  supabase:
+    log_file: supabase-access
+    domain: "supa.example.com"
+    backend: "localhost:8000" # kong gateway
+    paths:
+      - /rest/v1/*
+      - /auth/v1/*
+      - /realtime/v1/*
+      - /storage/v1/*
+      - /functions/v1/*
+    frontend: "localhost:3000" # dashboard
+    secure: true
+
+#  project_2:
+#    log_file: project2-access
+#    domain: "www.domain2.org"
+#    backend: "localhost:4000"
+#    paths: []
+#    frontend: "localhost:5000"
+#    secure: false

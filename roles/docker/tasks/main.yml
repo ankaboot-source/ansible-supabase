@@ -1,0 +1,57 @@
+---
+- name: Install Docker's GPG key
+  ansible.builtin.shell: |
+    apt-get install -y ca-certificates curl
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+  become: true
+
+- name: Add Docker repository manually
+  ansible.builtin.shell: |
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo \"${UBUNTU_CODENAME:-$VERSION_CODENAME}\") stable" | \
+    tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+- name: Update apt
+  apt:
+    update_cache: yes
+  become: true
+
+- name: Install Docker packages
+  become: true
+  apt:
+    name:
+      - docker-ce
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+  when: not ansible_check_mode
+
+- name: Add user to docker group
+  become: true
+  command: usermod -aG docker {{ item }}
+  with_items: "{{ docker_users }}"
+
+- name: Restart service docker
+  become: true
+  ansible.builtin.systemd:
+    name: docker
+    state: restarted
+    daemon_reload: yes
+    enabled: yes
+  when: not ansible_check_mode and docker_restart is defined and docker_restart
+
+- name: Start service docker
+  become: true
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    daemon_reload: yes
+    enabled: yes
+  when: docker_restart is not defined or not docker_restart
+
+- name: Remove unwanted containers
+  become: true
+  command: "docker rm -f {{ item }} || :"
+  with_items: "{{ containers_to_destroy }}"

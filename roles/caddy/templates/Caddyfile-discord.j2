@@ -1,0 +1,73 @@
+{
+	order authenticate before respond
+	order authorize before basicauth
+
+	security {
+
+		oauth identity provider discord {
+			realm discord
+			driver discord
+			client_id {{ discord_oauth_client_id }}
+			client_secret {{ discord_oauth_client_secret }}
+			scopes identify guilds guilds.members.read
+			user_group_filters {{ discord_guild_id }}
+		}
+
+                authentication portal myportal {
+			crypto default token lifetime 3600
+			enable identity provider discord
+                        crypto key sign-verify {env.JWT_SHARED_KEY}
+			cookie domain {{ domain }}
+
+			transform user {
+				match role discord.com/{{ discord_guild_id }}/role/{{ admin_role_id }}
+				action add role authp/admin
+			}
+
+			transform user {
+				match role discord.com/{{ discord_guild_id }}/members
+				action add role authp/user
+			}
+		}
+
+		authorization policy mypolicy {
+			set auth url https://{{ domain }}/auth/oauth2/discord
+			crypto key sign-verify {env.JWT_SHARED_KEY}
+                        allow roles authp/admin authp/user
+			validate bearer header
+			inject headers with claims
+		}
+	}
+}
+
+{% for project, cfg in projects.items() %}
+https://{{ cfg.domain }} {
+
+    log {
+        output file /var/log/caddy/{{cfg.log_file}}.log {
+            roll_size 10MiB
+            roll_keep 10
+            roll_keep_for 24h
+        }
+    }
+	
+    {% for path in cfg.paths %}
+    handle {{ path }} {
+        reverse_proxy {{ cfg.backend }}
+    }
+    {% endfor %}
+
+    {% if cfg.secure %}
+    handle /auth* {
+        authenticate with myportal
+    }	
+    {% endif %}
+
+    handle {
+        {% if cfg.secure %}
+        authorize with mypolicy
+        {% endif %}
+        reverse_proxy {{ cfg.frontend }}
+    }
+}
+{% endfor %}

@@ -1,0 +1,125 @@
+---
+- name: Install required dependencies
+  ansible.builtin.package:
+    name:
+      - tar
+    state: present
+
+- name: Download Go binary
+  ansible.builtin.get_url:
+    url: "https://golang.org/dl/go{{ go_version }}.linux-amd64.tar.gz"
+    dest: "/tmp/go{{ go_version }}.linux-amd64.tar.gz"
+    mode: '0644'
+
+- name: Extract Go to /usr/local
+  ansible.builtin.unarchive:
+    src: "/tmp/go{{ go_version }}.linux-amd64.tar.gz"
+    dest: /usr/local
+    remote_src: yes
+    owner: root
+    group: root
+
+- name: Ensure Go is in system-wide PATH
+  ansible.builtin.lineinfile:
+    path: /etc/profile
+    line: 'export PATH=$PATH:/usr/local/go/bin'
+    state: present
+
+- name: Build Caddy with caddy-security plugin
+  ansible.builtin.shell:
+    cmd: |
+      /usr/local/go/bin/go install github.com/caddyserver/xcaddy/cmd/xcaddy@{{ xcaddy_version }}
+      $HOME/go/bin/xcaddy build \
+        --with github.com/greenpau/caddy-security \
+        --output /usr/bin/caddy
+  environment:
+    PATH: "{{ ansible_env.PATH }}:/usr/local/go/bin:{{ ansible_env.HOME }}/go/bin"
+
+- name: Create caddy group
+  become: true
+  ansible.builtin.group:
+    name: caddy
+    system: yes
+
+- name: Create caddy user
+  become: true
+  ansible.builtin.user:
+    name: caddy
+    group: caddy
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Add caddy user to www-data group
+  become: true
+  ansible.builtin.user:
+    name: caddy
+    groups: www-data
+    append: yes
+
+- name: Ensure /var/lib/caddy directory exist
+  become: true
+  ansible.builtin.file:
+    path: /var/lib/caddy
+    state: directory
+    mode: "0750"
+    owner: caddy
+    group: caddy
+
+- name: Ensure Caddy runtime subdirectories exist
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+    owner: caddy
+    group: caddy
+  loop:
+    - /var/lib/caddy/.local/share/caddy
+    - /var/lib/caddy/.config/caddy
+
+- name: Create Caddy systemd service
+  become: true
+  template:
+    src: "{{ item.src }}.j2"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode }}"
+    owner: root
+    group: root
+  with_items:
+    - { src: "caddy.service", dest: "/usr/lib/systemd/system/caddy.service", mode: '0644' }
+
+- name: Ensure /var/log/caddy directory exists
+  ansible.builtin.file:
+    path: /var/log/caddy
+    state: directory
+    mode: "0755"
+    owner: caddy
+    group: caddy
+  become: true
+
+- name: Ensure /etc/caddy directory exists
+  ansible.builtin.file:
+    path: /etc/caddy
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  become: true
+
+- name: Copy Caddyfile to /etc/caddy
+  become: true
+  template:
+    src: "Caddyfile-{{ SSO_PROVIDER }}.j2"
+    dest: "/etc/caddy/Caddyfile"
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Reload systemd and start Caddy
+  become: true
+  ansible.builtin.systemd:
+    name: caddy
+    state: started
+    enabled: yes
+    daemon_reload: yes
