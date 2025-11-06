@@ -4,6 +4,7 @@
 deploy_user: changeit # your sudo user
 docker_users:
   - changeit # same as deploy_user
+docker_restart: yes
 
 #SUPABASE
 supabase_path: supabase/docker

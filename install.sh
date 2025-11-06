@@ -26,7 +26,6 @@ help_display() {
   echo "-a: run ansible-playbook"
   echo "-t: run test on ansible playbook"
   echo "-p: perform everything above"
-  echo "-r: reboot the device"
   echo "Example: ./install.sh -e yourinstance -p"
 }
 
@@ -76,11 +75,6 @@ error() {
   exit 1
 }
 
-reboot_device() {
-  echo "Rebooting device"
-  ${USE_SUDO} reboot
-}
-
 while getopts ":e:shdviaprt" option; do
   case "$option" in
     :) error ;;
@@ -93,7 +87,6 @@ while getopts ":e:shdviaprt" option; do
     t) test_ansible ;;
     a) ansible_playbook ;;
     p) perform_all ;;
-    r) reboot_device ;;
     *) error ;;
     esac
 done
