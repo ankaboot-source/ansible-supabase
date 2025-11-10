@@ -14,7 +14,7 @@ services:
     ports:
       - "3100:3100"
     volumes:
-      - ./loki-config.yaml:/etc/loki/config.yaml
+      - ./loki-config.yml:/etc/loki/config.yaml
       - loki_data:/loki
     networks:
       - net
@@ -73,7 +73,7 @@ services:
   promtail:
     image: grafana/promtail:main-4cae003
     volumes:
-      - ./promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - ./promtail-config.yml:/etc/promtail/config.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/log/journal/:/var/log/journal/
       - /run/log/journal/:/run/log/journal/

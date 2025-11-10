@@ -6,6 +6,9 @@ docker_users:
   - changeit # same as deploy_user
 docker_restart: yes
 
+#monitor
+monitor_path: monitor
+
 #SUPABASE
 supabase_path: supabase/docker
 kong_conf_path: volumes/api
