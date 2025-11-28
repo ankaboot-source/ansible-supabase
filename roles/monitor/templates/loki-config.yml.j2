@@ -1,0 +1,58 @@
+---
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  grpc_server_max_recv_msg_size: 33554432
+  grpc_server_max_send_msg_size: 33554432
+
+ingester_client:
+  grpc_client_config:
+    max_recv_msg_size: 33554432
+    max_send_msg_size: 33554432
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: inmemory
+
+query_scheduler:
+  max_outstanding_requests_per_tenant: 550
+  grpc_client_config:
+    max_send_msg_size: 33554432 # 32mb, default = 16777216]
+    max_recv_msg_size: 33554432
+
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v11
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  ingestion_burst_size_mb: 16
+
+table_manager:
+  retention_deletes_enabled: true
+  retention_period: 7d
+
+analytics:
+  reporting_enabled: false

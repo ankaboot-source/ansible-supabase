@@ -1,0 +1,35 @@
+---
+- name: Create monitor folders
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0775"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+  loop:
+    - "/home/{{ deploy_user }}/{{ monitor_path }}/prometheus"
+    - "/home/{{ deploy_user }}/{{ monitor_path }}/grafana"
+    - "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/dashboards/default"
+    - "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/datasources"
+
+- name: Create monitor config files
+  template:
+    src: "{{ item.src }}.j2"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode }}"
+  with_items:
+    - { src: "docker-compose-monitor.yml", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/docker-compose-monitor.yml", mode: '0664' }
+    - { src: "env", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/.env", mode: '0664' }
+    - { src: "loki-config.yml", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/loki-config.yml", mode: '0664' }
+    - { src: "promtail-config.yml", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/promtail-config.yml", mode: '0664' }
+    - { src: "prometheus.yml", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/prometheus/prometheus.yml", mode: '0664' }
+    - { src: "dashboards.yml", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/dashboards/dashboards.yml", mode: '0664' }
+    - { src: "datasources.yml", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/datasources/datasources.yml", mode: '0664' }
+    - { src: "server-stats.json", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/dashboards/default/server-stats.json", mode: '0664' }
+    - { src: "grafana.ini", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/grafana.ini", mode: '0664' }
+
+
+- name: Start monitor instances
+  become: yes
+  ansible.builtin.command: docker compose -f /home/"{{ deploy_user }}"/"{{ monitor_path }}"/docker-compose-monitor.yml up -d

@@ -3,4 +3,5 @@
   roles:
    - docker
    - caddy
+   - monitor
    - supabase

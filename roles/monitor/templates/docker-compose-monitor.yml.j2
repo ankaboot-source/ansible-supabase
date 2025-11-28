@@ -1,0 +1,130 @@
+---
+networks:
+  net:
+
+volumes:
+  grafana_data: {}
+  loki_data: {}
+
+services:
+
+  loki:
+    image: grafana/loki:main-4cae003
+    command: "-config.file=/etc/loki/config.yaml"
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yml:/etc/loki/config.yaml
+      - loki_data:/loki
+    networks:
+      - net
+    restart: always
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: always
+    volumes:
+      - ./prometheus:/etc/prometheus/
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - 9090:9090
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - net
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_SENDER=${SMTP_SENDER}
+      - GRAFANA_ALERT_HOST=${GRAFANA_ALERT_HOST}
+      - GF_SERVER_ROOT_URL=${GRAFANA_SERVER_ROOT_URL}
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_INSTALL_PLUGINS=grafana-sentry-datasource,redis-datasource
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_FEATURE_TOGGLES_ENABLE=nestedFolders
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/:/etc/grafana/provisioning/
+      - ./grafana/grafana.ini:/etc/grafana/grafana.ini
+      - ./grafana/home.json:/etc/grafana/home.json
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - net
+    restart: always
+
+
+  promtail:
+    image: grafana/promtail:main-4cae003
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/log/journal/:/var/log/journal/
+      - /run/log/journal/:/run/log/journal/
+      - /etc/machine-id:/etc/machine-id
+      - /var/log/:/var/log
+    command: -config.file=/etc/promtail/config.yaml
+    networks:
+      - net
+
+  # Node-exporter for exporting server metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    ports:
+      - 9100:9100
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - --collector.filesystem.ignored-mount-points
+      - '^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/)'
+    restart: always
+    network_mode: "host"
+
+  # cAdvisor for exporting containers metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - 7070:7070
+    command:
+      - '-housekeeping_interval=10s'
+      - '-docker_only=true'
+      - '-port=7070'
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    networks:
+      - net
+    restart: always
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter
+    network_mode: "host"
+    environment:
+      - DATA_SOURCE_NAME=${POSTGRES_EXPORTER_CONNECTION_STRING}
+    restart: always
