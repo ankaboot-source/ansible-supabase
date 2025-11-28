@@ -1,22 +1,17 @@
 ---
-- name: Check if monitor folder exists
-  ansible.builtin.stat:
-    path: "/home/{{ deploy_user }}/monitor"
-  register: monitor_dir
-
-- name: Create monitor folder
+- name: Create monitor folders
   become: true
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
     mode: "0775"
-    owner: {{ deploy_user }}
-    group: {{ deploy_user }}
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
   loop:
     - "/home/{{ deploy_user }}/{{ monitor_path }}/prometheus"
+    - "/home/{{ deploy_user }}/{{ monitor_path }}/grafana"
     - "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/dashboards/default"
     - "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/datasources"
-  when: not monitor_dir.stat.exists
 
 - name: Create monitor config files
   template:
@@ -32,3 +27,9 @@
     - { src: "dashboards.yml", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/dashboards/dashboards.yml", mode: '0664' }
     - { src: "datasources.yml", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/datasources/datasources.yml", mode: '0664' }
     - { src: "server-stats.json", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/dashboards/default/server-stats.json", mode: '0664' }
+    - { src: "grafana.ini", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/grafana.ini", mode: '0664' }
+
+
+- name: Start monitor instances
+  become: yes
+  ansible.builtin.command: docker compose -f /home/"{{ deploy_user }}"/"{{ monitor_path }}"/docker-compose-monitor.yml up -d

@@ -1,3 +1,4 @@
+{% raw %}
 {
   "annotations": {
     "list": [
@@ -907,7 +908,7 @@
           "refId": "K"
         }
       ],
-      "title": "Server Resource Overview【JOB：Leadminer，Total：$total】",
+      "title": "Server Resource Overview【Host：$show_hostname，Total：$total】",
       "type": "table"
     },
     {
@@ -2947,8 +2948,7 @@
   "refresh": "1m",
   "schemaVersion": 40,
   "tags": [
-    "Leadminer",
-    "QA"
+    "Server Stats"
   ],
   "templating": {
     "list": [
@@ -3154,8 +3154,8 @@
       },
       {
         "current": {
-          "text": "leadminer-QA",
-          "value": "leadminer-QA"
+          "text": "Server Stats",
+          "value": "Server Stats"
         },
         "datasource": {
           "type": "prometheus",
@@ -3241,8 +3241,9 @@
     ]
   },
   "timezone": "browser",
-  "title": "All In One Leadminer QA【Server Performance】【Containers Performance】",
+  "title": "All In One 【Server Performance】【Containers Performance】",
   "uid": "d800042a-cf85-484e-8646-57b7d14db07d",
   "version": 8,
   "weekStart": ""
 }
+{% endraw %}
