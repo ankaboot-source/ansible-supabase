@@ -1,6 +1,7 @@
 # Ansible Supabase & Monitoring Stack
 
 This repository provides an Ansible-based automation toolkit for deploying a self-hosted Supabase stack, Docker, a Caddy reverse proxy with [caddy-security](https://github.com/authcrunch/authcrunch.github.io) for OAuth2-protected access, and a full monitoring suite (Grafana, Prometheus, Loki, and exporters).
+
 It is built for fast, repeatable, production-ready deployments on fresh Ubuntu servers.
 
 
