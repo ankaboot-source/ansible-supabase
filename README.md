@@ -16,8 +16,9 @@ It is built for fast, repeatable, production-ready deployments on fresh Ubuntu s
 - [🛠 Requirements](#-requirements)
 - [📥 Installation](#--installation)
   - [1. Clone the repository](#1-clone-the-repository)
-  - [2. Configure environment variables](#2-configure-environment-variables)
-  - [3. Running the Playbooks](#3-running-the-playbooks)
+  - [2. Register OAuth2 Application](#2-register-oauth2-application)
+  - [3. Configure environment variables](#3-configure-environment-variables)
+  - [4. Running the Playbooks](#4-running-the-playbooks)
 
 
 ---
@@ -80,12 +81,50 @@ Includes ready-made Grafana provisioning:
 https://github.com/ankaboot-source/ansible-supabase.git
 cd ansible-supabase
 ```
-### **2. Configure environment variables**
+### **2. Register OAuth2 Application**
+
+To protect the Supabase dashboard with OAuth2 SSO, you must create an OAuth2 application with **one** of the supported providers:
+
+- **GitHub**
+- **GitLab**
+- **Discord**
+
+Below are the steps for each provider. After creating the app, you will receive:
+- **Client ID**
+- **Client Secret**
+
+You will later place these values inside your `env/supabase.yml`.
+
+
+#### **GitHub OAuth App**
+1. Go to: https://github.com/settings/developers  
+2. Click **"OAuth Apps" → "New OAuth app"**
+3. Set Redirect URI : https://your-supabase-domain/auth/oauth2/github/authorization-code-callback
+4. Set Home page URL : https://your-supabase-domain/project/default
+
+#### **GitLab OAuth App**
+1. Go to: https://gitlab.com/-/profile/applications
+2. Click **"Add new application"**
+3. Set Redirect URI : https://your-supabase-domain/auth/oauth2/gitlab/authorization-code-callback
+4. Enable openid, profile and email scopes
+
+#### **Discord OAuth2**
+1. Go to: https://discord.com/developers/applications  
+2. Create a new application
+3. Set Redirect URI : https://your-supabase-domain/auth/oauth2/discord/authorization-code-callback
+
+---
+**More Informations:**
+- GitHub : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0007-github
+- GitLab : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0009-gitlab
+- Discord : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0013-discord
+  
+### **3. Configure environment variables**
 Edit the main environment file:
 >
 > [env/supabase.yml](https://github.com/ankaboot-source/ansible-supabase/blob/main/env/supabase.yml)
 >
-### **3. Running the Playbooks**
+### **4. Running the Playbooks**
 Use the install script:
 ```bash
 sudo ./install.sh
