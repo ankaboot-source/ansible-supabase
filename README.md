@@ -75,13 +75,9 @@ Edit the main environment file:
 ### **3. Running the Playbooks**
 Use the install script:
 ```bash
-sudo bash install.sh -e supabase -p
+sudo ./install.sh
 ```
-Options:
-- -e supabase → loads env/supabase.yml
-- -p → prompts for SSH/sudo password
-
-This executes all roles:
+This will install Ansible, Git and executes all roles below:
   - Docker
   - Caddy
   - Monitoring
