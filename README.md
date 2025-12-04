@@ -5,6 +5,21 @@ This repository provides an Ansible-based automation toolkit for deploying a sel
 It is built for fast, repeatable, production-ready deployments on fresh Ubuntu servers.
 
 
+
+## 📑 Table of Contents
+
+- [🚀 Features](#-features)
+  - [Docker Role](#docker-role)
+  - [Supabase Role](#supabase-role)
+  - [Monitor Role](#monitor-role)
+  - [Caddy Role](#caddy-role)
+- [🛠 Requirements](#-requirements)
+- [📥 Installation](#--installation)
+  - [1. Clone the repository](#1-clone-the-repository)
+  - [2. Configure environment variables](#2-configure-environment-variables)
+  - [3. Running the Playbooks](#3-running-the-playbooks)
+
+
 ---
 
 <details open>
@@ -43,12 +58,11 @@ Includes ready-made Grafana provisioning:
 ---
 
 </details>
-
 <details open>
 <summary><h2>🛠 Requirements</h2></summary>
 
 - Ubuntu 20.04+
-- 2 domain name records (recommended for reverse proxying Supabase and Grafana)
+- 2 domain name records are required for reverse proxying Supabase and Grafana (Up to you to use 2 domain, 2 subdomains or mixed)
 - Register Oauth2 application within one of our supported provider options:
   
   - GitHub
@@ -58,7 +72,6 @@ Includes ready-made Grafana provisioning:
 ---
 
 </details>
-
 <details open>
 <summary><h2> 📥 Installation</h2></summary>
 
