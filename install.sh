@@ -5,9 +5,11 @@
 [[ ! $VERBOSE ]] && export VERBOSE=""
 [[ ! $VAR_OPTS ]] && export VAR_OPTS=""
 [[ ! $PLAYBOOK ]] && export PLAYBOOK="playbook"
+[[ ! $ACTION_SELECTED ]] && export ACTION_SELECTED=0
+
 
 environment_set() {
-  env="${1}"
+  env="${1:-supabase}"
   export VAR_OPTS="-e \"@env/${env}.yml\""
   export PLAYBOOK="playbook-${env//[0-9]/}.yml"
 }
@@ -25,8 +27,7 @@ help_display() {
   echo "-i: install ansible"
   echo "-a: run ansible-playbook"
   echo "-t: run test on ansible playbook"
-  echo "-p: perform everything above"
-  echo "Example: ./install.sh -e yourinstance -p"
+  echo "Example: ./install.sh"
 }
 
 dry_run_set() {
@@ -75,6 +76,9 @@ error() {
   exit 1
 }
 
+# default environment if -e isn't called
+environment_set "supabase"
+
 while getopts ":e:shdviaprt" option; do
   case "$option" in
     :) error ;;
@@ -82,11 +86,16 @@ while getopts ":e:shdviaprt" option; do
     s) sudo_enable ;;
     h) help_display ;;
     d) dry_run_set ;;
-    v) verbose_set ;;
-    i) install_ansible ;;
-    t) test_ansible ;;
-    a) ansible_playbook ;;
-    p) perform_all ;;
+    v) verbose_set  ;;
+    i) install_ansible ; ACTION_SELECTED=1 ;;
+    t) test_ansible ; ACTION_SELECTED=1 ;;
+    a) ansible_playbook ; ACTION_SELECTED=1 ;;
     *) error ;;
     esac
 done
+
+# Install ansible and run ansible-playbook if no option is given
+if [[ $ACTION_SELECTED -eq 0 ]]; then
+  perform_all
+fi
+
