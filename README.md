@@ -62,7 +62,7 @@ Includes ready-made Grafana provisioning:
 <details open>
 <summary><h2>🛠 Requirements</h2></summary>
 
-- Ubuntu 20.04+
+- Debian-based systems
 - 2 domain name records are required for reverse proxying Supabase and Grafana (Up to you to use 2 domain, 2 subdomains or mixed)
 - Register Oauth2 application within one of our supported provider options:
   
