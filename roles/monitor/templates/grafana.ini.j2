@@ -608,7 +608,7 @@
 ;login_cookie_name = grafana_session
 
 # Disable usage of Grafana build-in login solution.
-disable_login = true
+disable_login = false
 
 # The maximum lifetime (duration) an authenticated user can be inactive before being required to login at next visit. Default is 7 days (7d). This setting should be expressed as a duration, e.g. 5m (minutes), 6h (hours), 10d (days), 2w (weeks), 1M (month). The lifetime resets at each successful token rotation.
 ;login_maximum_inactive_lifetime_duration =
@@ -623,7 +623,7 @@ disable_login = true
 disable_login_form = true
 
 # Set to true to disable the sign out link in the side menu. Useful if you use auth.proxy or auth.jwt, defaults to false
-disable_signout_menu = true
+disable_signout_menu = false
 
 # URL to redirect the user to after sign out
 ;signout_redirect_url =
@@ -675,7 +675,7 @@ disable_signout_menu = true
 #################################### Anonymous Auth ######################
 [auth.anonymous]
 # enable anonymous access
-;enabled = false
+enabled = false
 
 # specify organization name that should be used for unauthenticated users
 ;org_name = Main Org.
@@ -691,22 +691,22 @@ disable_signout_menu = true
 
 #################################### GitHub Auth ##########################
 [auth.github]
-;name = GitHub
-;icon = github
-;enabled = false
-;allow_sign_up = true
-;auto_login = false
-;client_id = some_id
-;client_secret = some_secret
-;scopes = user:email,read:org
-;auth_url = https://github.com/login/oauth/authorize
-;token_url = https://github.com/login/oauth/access_token
-;api_url = https://api.github.com/user
+name = GitHub
+icon = github
+enabled = true
+allow_sign_up = true
+auto_login = false
+client_id = ${GRAFANA_GITHUB_CLIENT_ID}
+client_secret = ${GRAFANA_GITHUB_CLIENT_SECRET}
+scopes = user:email,read:org
+auth_url = https://github.com/login/oauth/authorize
+token_url = https://github.com/login/oauth/access_token
+api_url = https://api.github.com/user
 ;signout_redirect_url =
 ;allowed_domains =
 ;team_ids =
-;allowed_organizations =
-;role_attribute_path =
+allowed_organizations = ${GRAFANA_GITHUB_ALLOWED_ORG}
+role_attribute_path = ${GRAFANA_GITHUB_ROLE}
 ;role_attribute_strict = false
 ;org_mapping =
 ;allow_assign_grafana_admin = false
