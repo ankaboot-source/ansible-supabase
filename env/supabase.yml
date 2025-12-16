@@ -9,6 +9,9 @@ docker_restart: yes
 #monitor
 monitor_path: monitor
 
+GRAFANA_AUTH_ANONYMOUS_ENABLED: false # set it to true if you want to access your dashboard without authentication
+GRAFANA_AUTH_ANONYMOUS_ORG_ROLE: Admin
+
 GRAFANA_GITHUB_CLIENT_ID: changeit
 GRAFANA_GITHUB_CLIENT_SECRET: changeit
 GRAFANA_GITHUB_ALLOWED_ORG: changeit # e.g. ["org1", "org2"] 
