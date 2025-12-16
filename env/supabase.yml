@@ -9,6 +9,23 @@ docker_restart: yes
 #monitor
 monitor_path: monitor
 
+GRAFANA_AUTH_ANONYMOUS_ENABLED: false # set it to true if you want to access your dashboard without authentication
+GRAFANA_AUTH_ANONYMOUS_ORG_ROLE: Admin
+
+GRAFANA_GITHUB_CLIENT_ID: changeit
+GRAFANA_GITHUB_CLIENT_SECRET: changeit
+GRAFANA_GITHUB_ALLOWED_ORG: changeit # e.g. ["org1", "org2"] 
+GRAFANA_GITHUB_ROLE: "'Admin'" # refer here for additional infos => https://grafana.com/docs/grafana/latest/setup-grafana/configure-access/configure-authentication/github/
+
+GRAFANA_SERVER_ROOT_URL: https://monitor.example.com # your dashboard url
+GRAFANA_ALERT_HOST: monitor.example.com
+
+GRAFANA_SMTP_PASSWORD: changeit
+GRAFANA_SMTP_HOST: mail.example.com
+GRAFANA_SMTP_USER: user@example.com
+GRAFANA_SMTP_SENDER: user@example.com
+
+
 #SUPABASE
 supabase_path: supabase/docker
 kong_conf_path: volumes/api
