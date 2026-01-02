@@ -4,8 +4,6 @@ This repository provides an Ansible-based automation toolkit for deploying a sel
 
 It is built for fast, repeatable, production-ready deployments on fresh Ubuntu servers.
 
-
-
 ## 📑 Table of Contents
 
 - [🚀 Features](#-features)
@@ -19,13 +17,13 @@ It is built for fast, repeatable, production-ready deployments on fresh Ubuntu s
   - [2. Register OAuth2 Application](#2-register-oauth2-application)
   - [3. Configure environment variables](#3-configure-environment-variables)
   - [4. Running the Playbooks](#4-running-the-playbooks)
-
+  - [5. Caddy SSO and DNS configuration](#5-Caddy-SSO-and-DNS-configuration)
 
 ---
 
 <details open>
 <summary><h2>🚀 Features</h2></summary>
-  
+
 ### **Docker Role**
 - Installs and configures Docker & Docker Compose.
 
@@ -47,9 +45,9 @@ A full observability solution including:
 - **Promtail**
 
 Includes ready-made Grafana provisioning:
-- Datasources  
-- Dashboards  
-- Monitoring docker-compose stack  
+- Datasources
+- Dashboards
+- Monitoring docker-compose stack
 
 ### **Caddy Role**
 - Installs and configure Caddy reverse proxy + [caddy-security](https://github.com/authcrunch/authcrunch.github.io) module.
@@ -65,7 +63,7 @@ Includes ready-made Grafana provisioning:
 - Debian-based systems
 - 2 domain name records are required for reverse proxying Supabase and Grafana (Up to you to use 2 domain, 2 subdomains or mixed)
 - Register Oauth2 application within one of our supported provider options:
-  
+
   - GitHub
   - GitLab
   - Discord
@@ -97,7 +95,7 @@ You will later place these values inside your `env/supabase.yml`.
 
 
 #### **GitHub OAuth App**
-1. Go to: https://github.com/settings/developers  
+1. Go to: https://github.com/settings/developers
 2. Click **"OAuth Apps" → "New OAuth app"**
 3. Set Redirect URI : https://your-supabase-domain/auth/oauth2/github/authorization-code-callback
 4. Set Home page URL : https://your-supabase-domain/project/default
@@ -109,7 +107,7 @@ You will later place these values inside your `env/supabase.yml`.
 4. Enable openid, profile and email scopes
 
 #### **Discord OAuth2**
-1. Go to: https://discord.com/developers/applications  
+1. Go to: https://discord.com/developers/applications
 2. Create a new application
 3. Set Redirect URI : https://your-supabase-domain/auth/oauth2/discord/authorization-code-callback
 
@@ -118,7 +116,7 @@ You will later place these values inside your `env/supabase.yml`.
 - GitHub : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0007-github
 - GitLab : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0009-gitlab
 - Discord : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0013-discord
-  
+
 ### **3. Configure environment variables**
 Edit the main environment file:
 >
@@ -136,3 +134,7 @@ This will install Ansible, Git and executes all roles below:
   - Supabase
 
 </details>
+
+### **5. Caddy SSO and DNS configuration**
+
+- Refer to this [caddy/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/caddy/README.md) for detailed informations.

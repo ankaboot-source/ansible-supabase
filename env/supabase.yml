@@ -58,6 +58,8 @@ openai_api_key: changeit
 
 
 #CADDY
+
+#### Provider configurations 
 SSO_PROVIDER: github # available: github, gitlab & discord
 
 ##Gitlab #https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0009-gitlab
@@ -80,9 +82,11 @@ discord_oauth_client_secret: changeit
 admin_role_id: changeit # your admin user ID
 discord_guild_id: changeit # your Discord server ID
 
-#### Common vars between Gitlab, GitHub & Discord
-domain: supa.example.com #domain or sub-domain where you will serve you supabase instance
+## Common vars between Gitlab, GitHub & Discord
+base_auth_domain: supa.example.com #domain or sub-domain will be used as an authentication endpoint and for storing cookies
 
+
+#### Caddyfile configuration
 # set paths to [] if you don’t want to handle any path outside of SSO protection 
 # set secure: false to disable Gitlab SSO
 projects:
@@ -106,12 +110,3 @@ projects:
     paths: []
     frontend: "localhost:3001" # dashboard
     secure: false
-
-
-#  project_2:
-#    log_file: project2-access
-#    domain: "www.domain2.org"
-#    backend: "localhost:4000"
-#    paths: []
-#    frontend: "localhost:5000"
-#    secure: false
