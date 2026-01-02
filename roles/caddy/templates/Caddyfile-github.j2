@@ -10,7 +10,7 @@
 			crypto default token lifetime 3600
 			enable identity provider github
                         crypto key sign-verify {env.JWT_SHARED_KEY}
-			cookie domain {{ domain }}
+			cookie domain {{ base_auth_domain }}
 			ui {
 				links {
 					"My Identity" "/whoami" icon "las la-user"
@@ -25,7 +25,7 @@
 		}
 
 		authorization policy mypolicy {
-			set auth url https://{{ domain }}/auth/oauth2/github
+			set auth url https://{{ base_auth_domain }}/auth/oauth2/github
 			crypto key sign-verify {env.JWT_SHARED_KEY}
                         allow roles authp/admin
 			validate bearer header
