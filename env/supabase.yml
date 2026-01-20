@@ -83,8 +83,8 @@ admin_role_id: changeit # your admin user ID
 discord_guild_id: changeit # your Discord server ID
 
 ## Common vars between Gitlab, GitHub & Discord
-base_auth_domain: supa.example.com #domain or sub-domain will be used as an authentication endpoint and for storing cookies
-
+base_auth_domain: auth.example.com # sub-domain will be used as an authentication endpoint
+root_domain: example.com # for storing cookies
 
 #### Caddyfile configuration
 # set paths to [] if you don’t want to handle any path outside of SSO protection 
@@ -100,6 +100,7 @@ projects:
       - /realtime/v1/*
       - /storage/v1/*
       - /functions/v1/*
+      - /upload/*
     frontend: "localhost:3000" # dashboard
     secure: true
 
