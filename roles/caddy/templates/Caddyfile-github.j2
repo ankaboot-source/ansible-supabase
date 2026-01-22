@@ -47,7 +47,7 @@ https://{{ base_auth_domain }} {
 
 
 {% for project, cfg in projects.items() %}
-https://{{ cfg.domain }} {
+https://{{ cfg.project_subdomain }} {
 
     log {
         output file /var/log/caddy/{{cfg.log_file}}.log {
