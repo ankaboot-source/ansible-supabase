@@ -16,8 +16,9 @@ It is built for fast, repeatable, production-ready deployments on fresh Ubuntu s
   - [1. Clone the repository](#1-clone-the-repository)
   - [2. Register OAuth2 Application](#2-register-oauth2-application)
   - [3. Caddy SSO and DNS configuration](#3-Caddy-SSO-and-DNS-configuration)
-  - [4. Configure environment variables](#4-configure-environment-variables) 
-  - [5. Running the Playbooks](#5-running-the-playbooks)
+  - [4. Monitor role configuration](#4-Monitor-role-configuration)
+  - [5. Configure environment variables](#5-configure-environment-variables) 
+  - [6. Running the Playbooks](#6-running-the-playbooks)
 
 ---
 
@@ -119,15 +120,19 @@ You will later place these values inside your `env/supabase.yml`.
 
 ### **3. Caddy SSO and DNS configuration**
 
-- Refer to this [caddy/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/caddy/README.md) for detailed informations.
+- Refer to this [caddy/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/caddy/README.md).
 
-### **4. Configure environment variables**
+### **4. Monitor role configuration**
+
+- Refer to this [monitor/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/monitor/README.md).
+
+### **5. Configure environment variables**
 Edit the main environment variables, required variables are tagged with **#REQUIRED**:
 >
 > [env/supabase.yml](https://github.com/ankaboot-source/ansible-supabase/blob/main/env/supabase.yml)
 >
 
-### **5. Starting up the roles**
+### **6. Starting up the roles**
 Use the install script:
 ```bash
 sudo ./install.sh
