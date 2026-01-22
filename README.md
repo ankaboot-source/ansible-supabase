@@ -1,8 +1,8 @@
-# Ansible Supabase & Monitoring Stack
+# Ansible Supabase & Monitoring stack
 
-This repository provides an Ansible-based automation toolkit for deploying a self-hosted Supabase stack, Docker, a Caddy reverse proxy with [caddy-security](https://github.com/authcrunch/authcrunch.github.io) for OAuth2-protected access, and a full monitoring suite (Grafana, Prometheus, Loki, and exporters).
+This repository provides an Ansible-based automation toolkit for deploying a self-hosted Supabase stack, Docker, a Caddy reverse proxy with [caddy-security](https://github.com/authcrunch/authcrunch.github.io) for OAuth2-protected access, and a full monitoring suite (Grafana, Prometheus, Loki, and their agents).
 
-It is built for fast, repeatable, production-ready deployments on fresh Ubuntu servers.
+It is built for fast, repeatable, production-ready deployments on fresh Debian-based servers.
 
 ## 📑 Table of Contents
 
@@ -18,8 +18,7 @@ It is built for fast, repeatable, production-ready deployments on fresh Ubuntu s
   - [3. Caddy SSO and DNS configuration](#3-Caddy-SSO-and-DNS-configuration)
   - [4. Monitor role configuration](#4-Monitor-role-configuration)
   - [5. Configure environment variables](#5-configure-environment-variables) 
-  - [6. Running the Playbooks](#6-running-the-playbooks)
-
+  - [6. Starting up the roles](#6-Starting-up-the-roles)
 ---
 
 <details open>
@@ -36,19 +35,13 @@ It is built for fast, repeatable, production-ready deployments on fresh Ubuntu s
 ### **Monitor Role**
 A full observability solution including:
 
-- **Grafana** (with auto-provisioned dashboards & datasources)
+- **Grafana** (with provisioned dashboards & datasources)
 - **Prometheus**
 - **Node Exporter**
 - **cAdvisor**
-- **Blackbox Exporter**
 - **Postgres Exporter**
 - **Loki** (logs)
 - **Promtail**
-
-Includes ready-made Grafana provisioning:
-- Datasources
-- Dashboards
-- Monitoring docker-compose stack
 
 ### **Caddy Role**
 - Installs and configure Caddy reverse proxy + [caddy-security](https://github.com/authcrunch/authcrunch.github.io) module.
@@ -62,8 +55,8 @@ Includes ready-made Grafana provisioning:
 <summary><h2>🛠 Requirements</h2></summary>
 
 - Debian-based systems
-- 2 domain name records are required for reverse proxying Supabase and Grafana (Up to you to use 2 domain, 2 subdomains or mixed)
-- Register Oauth2 application within one of our supported provider options:
+- 3 subdomains records, one for authentication and two for reverse proxying Supabase and Grafana.
+- Register Oauth2 application within one of the supported providers:
 
   - GitHub
   - GitLab
@@ -82,11 +75,6 @@ cd ansible-supabase
 ```
 ### **2. Register OAuth2 Application**
 
-To protect the Supabase dashboard with OAuth2 SSO, you must create an OAuth2 application with **one** of the supported providers:
-
-- **GitHub**
-- **GitLab**
-- **Discord**
 
 Below are the steps for each provider. After creating the app, you will receive:
 - **Client ID**
@@ -95,52 +83,47 @@ Below are the steps for each provider. After creating the app, you will receive:
 You will later place these values inside your `env/supabase.yml`.
 
 
-#### **GitHub OAuth App**
+#### **GitHub**
 1. Go to: https://github.com/settings/developers
 2. Click **"OAuth Apps" → "New OAuth app"**
 3. Set Redirect URI : https://your-supabase-domain/auth/oauth2/github/authorization-code-callback
 4. Set Home page URL : https://your-supabase-domain/project/default
 
-#### **GitLab OAuth App**
+#### **GitLab**
 1. Go to: https://gitlab.com/-/profile/applications
 2. Click **"Add new application"**
 3. Set Redirect URI : https://your-supabase-domain/auth/oauth2/gitlab/authorization-code-callback
 4. Enable openid, profile and email scopes
 
-#### **Discord OAuth2**
+#### **Discord**
 1. Go to: https://discord.com/developers/applications
 2. Create a new application
 3. Set Redirect URI : https://your-supabase-domain/auth/oauth2/discord/authorization-code-callback
 
----
-**More Informations:**
+#### **Sources:**
 - GitHub : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0007-github
 - GitLab : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0009-gitlab
 - Discord : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0013-discord
+---
 
 ### **3. Caddy SSO and DNS configuration**
 
-- Refer to this [caddy/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/caddy/README.md).
+- Refer to [caddy/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/caddy/README.md).
 
 ### **4. Monitor role configuration**
 
-- Refer to this [monitor/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/monitor/README.md).
+- Refer to [monitor/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/monitor/README.md).
 
 ### **5. Configure environment variables**
-Edit the main environment variables, required variables are tagged with **#REQUIRED**:
+All roles configurations are within the following file, make sure to update variables tagged with `#REQUIRED`
 >
 > [env/supabase.yml](https://github.com/ankaboot-source/ansible-supabase/blob/main/env/supabase.yml)
 >
 
 ### **6. Starting up the roles**
-Use the install script:
+Use the following script to install Ansible, Git and execute all roles:
+
 ```bash
 sudo ./install.sh
 ```
-This will install Ansible, Git and executes all roles below:
-  - Docker
-  - Caddy
-  - Monitoring
-  - Supabase
-
 </details>
