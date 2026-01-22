@@ -21,7 +21,7 @@ GRAFANA_SERVER_ROOT_URL: https://monitor.example.com # your dashboard url # REQU
 GRAFANA_ALERT_HOST: monitor.example.com # REQUIRED
 
 GRAFANA_SMTP_PASSWORD: changeit
-GRAFANA_SMTP_HOST: mail.example.coM
+GRAFANA_SMTP_HOST: mail.example.com
 GRAFANA_SMTP_USER: user@example.com
 GRAFANA_SMTP_SENDER: user@example.com
 
