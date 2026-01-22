@@ -10,8 +10,7 @@
   - cAdvisor
   - Postgres Exporter
   - Promtail
-- Automatically provisions dashboards
-- Includes several useful default dashboards
+- Automatically provisions and includes several useful dashboards
 
 ## Authentication & Access
 
