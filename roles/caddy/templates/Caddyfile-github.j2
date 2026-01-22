@@ -10,7 +10,7 @@
 			crypto default token lifetime 3600
 			enable identity provider github
                         crypto key sign-verify {env.JWT_SHARED_KEY}
-			cookie domain {{ base_auth_domain }}
+			cookie domain {{ root_domain }}
 			ui {
 				links {
 					"My Identity" "/whoami" icon "las la-user"
@@ -25,7 +25,7 @@
 		}
 
 		authorization policy mypolicy {
-			set auth url https://{{ base_auth_domain }}/auth/oauth2/github
+			set auth url https://{{ base_auth_domain }}/oauth2/github
 			crypto key sign-verify {env.JWT_SHARED_KEY}
                         allow roles authp/admin
 			validate bearer header
@@ -34,8 +34,20 @@
 	}
 }
 
+https://{{ base_auth_domain }} {
+    log {
+        output file /var/log/caddy/caddy-auth.log {
+            roll_size 10MiB
+            roll_keep 10
+            roll_keep_for 24h
+        }
+    }
+    authenticate with myportal
+}
+
+
 {% for project, cfg in projects.items() %}
-https://{{ cfg.domain }} {
+https://{{ cfg.project_subdomain }} {
 
     log {
         output file /var/log/caddy/{{cfg.log_file}}.log {
@@ -50,12 +62,6 @@ https://{{ cfg.domain }} {
         reverse_proxy {{ cfg.backend }}
     }
     {% endfor %}
-
-    {% if cfg.secure %}
-    handle /auth* {
-        authenticate with myportal
-    }	
-    {% endif %}
 
     handle {
         {% if cfg.secure %}

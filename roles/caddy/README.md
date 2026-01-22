@@ -50,13 +50,19 @@ The setup is dynamic and allows you to easily add new projects with or without S
     - discord_guild_id → Discord server ID
     </details>
 
-3. Set `secure: true` in the project section.
+3. Set base_auth_domain and root_domain
+
+    - **base_auth_domain** The domain used for authentication endpoints (e.g. auth.example.com).
+    - **root_domain** The domain used for storing cookies (e.g. example.com).
+> ℹ️ **Important** The root_domain must be set to the root level so that authentication cookies are accessible across all subdomains belonging to different projects.
+
+4. Set `secure: true` in the project section.
 
 ## Project Configuration
 
 Each project has its own settings:
 
-- **domain**: Domain where the project (dashboard, UI, Api...) will be served (domain or subdomain)
+- **project_subdomain**: Subdomain where the project (dashboard, UI, Api...) will be reverse proxied
 
 - **backend**: Upstream service for API or specific paths
 
@@ -81,17 +87,3 @@ PS: if you want to only reverse proxy frontends, you can just keep `backend` var
     frontend: "localhost:5000"
     secure: true
 ```
-
-## Authentication
-
-- Authentication is currently served under the `/auth` path on each project domain (e.g. https://ui.domain.org/auth), refer to [Caddyfile](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/caddy/templates/Caddyfile-github.j2#L55).
-
-- This endpoint is fully handled by Caddy and is responsible for:
-
-    - Initiating the GitLab OAuth flow
-    - Handling redirects and callbacks
-    - Managing authentication metadata and session state
-
-- All protected routes rely on this authentication flow when `secure: true` is enabled for a project.
-
-> ℹ️ **Important** Since we use path based authentication, `base_auth_domain` need to be same as the project's domain, will be used to handle authentication callbacks, redirects and storing cookies and sessions.

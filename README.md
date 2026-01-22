@@ -15,9 +15,10 @@ It is built for fast, repeatable, production-ready deployments on fresh Ubuntu s
 - [📥 Installation](#--installation)
   - [1. Clone the repository](#1-clone-the-repository)
   - [2. Register OAuth2 Application](#2-register-oauth2-application)
-  - [3. Configure environment variables](#3-configure-environment-variables)
-  - [4. Running the Playbooks](#4-running-the-playbooks)
-  - [5. Caddy SSO and DNS configuration](#5-Caddy-SSO-and-DNS-configuration)
+  - [3. Caddy SSO and DNS configuration](#3-Caddy-SSO-and-DNS-configuration)
+  - [4. Monitor role configuration](#4-Monitor-role-configuration)
+  - [5. Configure environment variables](#5-configure-environment-variables) 
+  - [6. Running the Playbooks](#6-running-the-playbooks)
 
 ---
 
@@ -117,12 +118,21 @@ You will later place these values inside your `env/supabase.yml`.
 - GitLab : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0009-gitlab
 - Discord : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0013-discord
 
-### **3. Configure environment variables**
-Edit the main environment file:
+### **3. Caddy SSO and DNS configuration**
+
+- Refer to this [caddy/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/caddy/README.md).
+
+### **4. Monitor role configuration**
+
+- Refer to this [monitor/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/monitor/README.md).
+
+### **5. Configure environment variables**
+Edit the main environment variables, required variables are tagged with **#REQUIRED**:
 >
 > [env/supabase.yml](https://github.com/ankaboot-source/ansible-supabase/blob/main/env/supabase.yml)
 >
-### **4. Running the Playbooks**
+
+### **6. Starting up the roles**
 Use the install script:
 ```bash
 sudo ./install.sh
@@ -134,7 +144,3 @@ This will install Ansible, Git and executes all roles below:
   - Supabase
 
 </details>
-
-### **5. Caddy SSO and DNS configuration**
-
-- Refer to this [caddy/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/caddy/README.md) for detailed informations.
