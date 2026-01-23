@@ -86,19 +86,19 @@ You will later place these values inside your `env/supabase.yml`.
 #### **GitHub**
 1. Go to: https://github.com/settings/developers
 2. Click **"OAuth Apps" → "New OAuth app"**
-3. Set Redirect URI : https://your-supabase-domain/auth/oauth2/github/authorization-code-callback
+3. Set Redirect URI : https://your-supabase-subdomain/oauth2/github/authorization-code-callback
 4. Set Home page URL : https://your-supabase-domain/project/default
 
 #### **GitLab**
 1. Go to: https://gitlab.com/-/profile/applications
 2. Click **"Add new application"**
-3. Set Redirect URI : https://your-supabase-domain/auth/oauth2/gitlab/authorization-code-callback
+3. Set Redirect URI : https://your-supabase-subdomain/oauth2/gitlab/authorization-code-callback
 4. Enable openid, profile and email scopes
 
 #### **Discord**
 1. Go to: https://discord.com/developers/applications
 2. Create a new application
-3. Set Redirect URI : https://your-supabase-domain/auth/oauth2/discord/authorization-code-callback
+3. Set Redirect URI : https://your-supabase-subdomain/oauth2/discord/authorization-code-callback
 
 #### **Sources:**
 - GitHub : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0007-github
