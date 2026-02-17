@@ -1,0 +1,12 @@
+---
+
+- name: Install fail2ban
+  ansible.builtin.package:
+    name: "{{ fail2ban_packages }}"
+    state: present
+
+
+- name: Restart fail2ban
+  ansible.builtin.service:
+    name: "{{ fail2ban_service }}"
+    state: restarted
