@@ -416,6 +416,18 @@ services:
         "config_file=/etc/postgresql/postgresql.conf",
         "-c",
         "log_min_messages=fatal" # prevents Realtime polling queries from appearing in logs
+        "-c",
+        "logging_collector=on",
+        "-c", 
+        "log_destination=stderr",
+        "-c",
+        "log_directory=log",
+        "-c",
+        "log_filename=postgresql-%Y-%m-%d_%H%M%S.log",
+        "-c",
+        "log_rotation_age=7d",
+        "-c",
+        "log_statement=all"
       ]
     restart: unless-stopped
     ports:
@@ -452,6 +464,8 @@ services:
       - ./volumes/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:Z
       # Use named volume to persist pgsodium decryption key between restarts
       - db-config:/etc/postgresql-custom
+      # Mount postgresql logs into host 
+      - /var/log/postgresql:/var/lib/postgresql/data/log
 
   vector:
     container_name: supabase-vector

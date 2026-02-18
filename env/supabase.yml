@@ -123,7 +123,7 @@ projects:
     backend:
     paths: []
     frontend: "localhost:3001" # Grafana dashboard
-    secure: true
+    secure: false # Grafana will be using its own oauth system
 
 
 ############
