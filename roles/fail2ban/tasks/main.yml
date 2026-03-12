@@ -1,0 +1,21 @@
+---
+
+- name: Install fail2ban
+  ansible.builtin.package:
+    name: "{{ fail2ban_packages }}"
+    state: present
+
+- name: Configure fail2ban
+  template:
+    src: "{{ item.src }}.j2"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode }}"
+  with_items:
+    - { src: "jails/postgresql.conf", dest: "/etc/fail2ban/jail.d/postgresql.conf", mode: '0664' }
+    - { src: "actions/postgresql.conf", dest: "/etc/fail2ban/action.d/postgresql.conf", mode: '0664' }
+    - { src: "filters/postgresql.conf", dest: "/etc/fail2ban/filter.d/postgresql.conf", mode: '0664' }
+
+- name: Restart fail2ban
+  ansible.builtin.service:
+    name: "{{ fail2ban_service }}"
+    state: restarted

@@ -1,12 +1,18 @@
 ---
 
-#COMMON
+##########
+# COMMON #
+##########
+
 deploy_user: changeit # System user ( e.g. my_user if `pwd` shows /home/my_user) # REQUIRED
 docker_users:
   - changeit # same as deploy_user #REQUIRED
 docker_restart: yes
 
-#monitor
+###########
+# monitor #
+###########
+
 monitor_path: monitor
 
 GRAFANA_AUTH_ANONYMOUS_ENABLED: false # set it to true if you want to access your dashboard without authentication
@@ -25,8 +31,10 @@ GRAFANA_SMTP_HOST: mail.example.com
 GRAFANA_SMTP_USER: user@example.com
 GRAFANA_SMTP_SENDER: user@example.com
 
+############
+# SUPABASE #
+############
 
-#SUPABASE
 supabase_path: supabase/docker
 kong_conf_path: volumes/api
 
@@ -56,8 +64,9 @@ azure_secret: changeit
 
 openai_api_key: changeit
 
-
-#CADDY
+#########
+# CADDY #
+#########
 
 #### Provider configurations 
 SSO_PROVIDER: github # available: github, gitlab & discord
@@ -114,4 +123,13 @@ projects:
     backend:
     paths: []
     frontend: "localhost:3001" # Grafana dashboard
-    secure: true
+    secure: false # Grafana will be using its own oauth system
+
+
+############
+# FAIL2BAN #
+############
+
+fail2ban_packages:
+  - fail2ban
+fail2ban_service: fail2ban

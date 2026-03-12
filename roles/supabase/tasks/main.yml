@@ -11,6 +11,14 @@
     depth: 1
   when: not supabase_dir.stat.exists
 
+- name: Ensure /var/log/postgresql directory exists
+  ansible.builtin.file:
+    path: /var/log/postgresql
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Create Supabase files
   template:
     src: "{{ item.src }}.j2"
