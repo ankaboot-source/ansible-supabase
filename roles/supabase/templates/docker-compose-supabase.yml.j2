@@ -500,8 +500,8 @@ services:
     image: supabase/supavisor:{{ sb_supavisor_version }}
     restart: unless-stopped
     ports:
-      - ${POSTGRES_PORT}:5432
-      - ${POOLER_PROXY_PORT_TRANSACTION}:6543
+      - 127.0.0.1:${POSTGRES_PORT}:5432
+      - 127.0.0.1:${POOLER_PROXY_PORT_TRANSACTION}:6543
     volumes:
       - ./volumes/pooler/pooler.exs:/etc/pooler/pooler.exs:ro,z
     healthcheck:
