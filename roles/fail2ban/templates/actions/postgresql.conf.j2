@@ -1,0 +1,8 @@
+[Definition]
+
+actionban = iptables -I FORWARD -s <ip> -j REJECT --reject-with icmp-port-unreachable -m comment --comment "fail2ban postgresql"
+actionunban = iptables -D FORWARD -s <ip> -j REJECT --reject-with icmp-port-unreachable -m comment --comment "fail2ban postgresql"
+
+[init]
+
+name = PostgreSQL
