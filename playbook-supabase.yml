@@ -5,3 +5,4 @@
    - caddy
    - monitor
    - supabase
+   - fail2ban

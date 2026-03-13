@@ -421,7 +421,7 @@ services:
         "-c", 
         "log_destination=stderr",
         "-c",
-        "log_directory=log",
+        "log_directory=/var/log/postgresql",
         "-c",
         "log_filename=postgresql.log",
         "-c",
@@ -451,11 +451,8 @@ services:
       - ./volumes/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:Z
       # Initialize the database settings with JWT_SECRET and JWT_EXP
       - ./volumes/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:Z
-    
-      # Encrypted data volume mount (persist between restarts)
-      #- /var/lib/encrypted-data/supabase-data:/var/lib/postgresql/data:Z
+      # Data mount
       - ./volumes/db/data:/var/lib/postgresql/data:Z
-
       # Changes required for Analytics support
       - ./volumes/db/logs.sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql:Z
       # Changes required for internal supabase data such as _analytics
@@ -465,7 +462,7 @@ services:
       # Use named volume to persist pgsodium decryption key between restarts
       - db-config:/etc/postgresql-custom
       # Mount postgresql logs into host 
-      - /var/log/postgresql:/var/lib/postgresql/data/log
+      - /var/log/postgresql:/var/log/postgresql:Z
 
   vector:
     container_name: supabase-vector
@@ -500,7 +497,7 @@ services:
     image: supabase/supavisor:{{ sb_supavisor_version }}
     restart: unless-stopped
     ports:
-      - 127.0.0.1:${POSTGRES_PORT}:5432
+#      - 127.0.0.1:${POSTGRES_PORT}:5432
       - 127.0.0.1:${POOLER_PROXY_PORT_TRANSACTION}:6543
     volumes:
       - ./volumes/pooler/pooler.exs:/etc/pooler/pooler.exs:ro,z
