@@ -11,6 +11,13 @@
     depth: 1
   when: not supabase_dir.stat.exists
 
+- name: Ensure correct ownership
+  ansible.builtin.file:
+    path: "/home/{{ deploy_user }}/supabase"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    recurse: yes
+
 - name: Ensure /var/log/postgresql directory exists
   ansible.builtin.file:
     path: /var/log/postgresql
