@@ -40,15 +40,38 @@ kong_conf_path: volumes/api
 
 postgres_db_pwd: changeit # REQUIRED
 
-#Refer to https://supabase.com/docs/guides/self-hosting/docker to generate jwt, anon and service role keys
+#### Refer to https://supabase.com/docs/guides/self-hosting/docker to generate jwt, anon and service role keys
 sb_jwt_secret: changeit # REQUIRED
 sb_anon_key: changeit # REQUIRED
 sb_service_role_key: changeit #REQUIRED
 secret_key_base: UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq
+vault_enc_key: your-32-character-encryption-key
+pg_meta_crypto_key: your-encryption-key-32-chars-min
+logflare_public_access_token: your-super-secret-and-long-logflare-key-public
+logflare_private_access_token: your-super-secret-and-long-logflare-key-private
+s3_protocol_access_key_id: 625729a08b95bf1b7ff351a663f3a23c
+s3_protocol_access_key_secret: 850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907
+pooler_tenant_id: your-tenant-id
+
+#### Asymmetric key pair (ES256) and opaque api keys
+# Opaque API key for client-side use (anon role).
+sb_publishable_key: changeit # Optional
+# Opaque API key for server-side use (service_role). Never expose in client code.
+sb_secret_key: changeit # Optional
+# JSON array of signing JWKs (EC private + legacy symmetric).
+# Used by Auth.
+sb_jwt_keys: changeit # Optional
+# JWKS for token verification (EC public + legacy symmetric).
+# Used by PostgREST, Realtime, Storage to verify tokens.
+sb_jwt_jwks: changeit # Optional
+
 
 site_url: https://app.example.com # Website url
 api_external_url: https://supa.example.com # For supabase studio # REQUIRED
 
+## Email auth
+enable_email_signup: true
+enable_email_autoconfirm: false
 smtp_admin_email: user@example.com
 smtp_host: mail.example.com
 smtp_port: 587
@@ -56,13 +79,21 @@ smtp_user: user@example.com
 smtp_password: changeit
 smtp_sender_name: changeit
 
+#### Oauth / Social login providers
+google_enabled: true
 google_client_id: changeit
 google_secret: changeit
 
+github_enabled: true
+github_client_id: changeit
+github_secret: changeit
+
+azure_enabled: true
 azure_client_id: changeit
 azure_secret: changeit
 
 openai_api_key: changeit
+
 
 #########
 # CADDY #
