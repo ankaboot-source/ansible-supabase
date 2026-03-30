@@ -1,15 +1,15 @@
 ---
 
-sb_studio_version: 2025.06.30-sha-6f5982d
-sb_kong_version: 2.8.1
-sb_gotrue_version: 2.177.0
-sb_rest_version: 12.2.12
-sb_realtime_version: 2.34.47
-sb_storage_version: 1.25.7
-sb_imgproxy_version: 3.8.0
-sb_meta_version: 0.91.0
-sb_functions_version: 1.67.4
-sb_analytics_version: 1.14.2
-sb_db_version: 15.8.1.060
-sb_vector_version: 0.28.1-alpine
-sb_supavisor_version: 2.5.7
+sb_studio_version: supabase/studio:2026.03.16-sha-5528817
+sb_kong_version: kong/kong:3.9.1
+sb_gotrue_version: supabase/gotrue:v2.186.0
+sb_rest_version: postgrest/postgrest:v14.6
+sb_realtime_version: supabase/realtime:v2.76.5
+sb_storage_version: supabase/storage-api:v1.44.2
+sb_imgproxy_version: darthsim/imgproxy:v3.30.1
+sb_meta_version: supabase/postgres-meta:v0.95.2
+sb_functions_version: supabase/edge-runtime:v1.71.2
+sb_analytics_version: supabase/logflare:1.31.2
+sb_db_version: supabase/postgres:15.8.1.085
+sb_vector_version: timberio/vector:0.53.0-alpine
+sb_supavisor_version: supabase/supavisor:2.7.4
