@@ -37,8 +37,8 @@ acls:
 ###
 services:
   ## Open Auth routes
-  - name: auth-v1-ope
-    _comment: 'Auth: /auth/v1/verify* -> http://auth:9999/verify*'n
+  - name: auth-v1-open
+    _comment: 'Auth: /auth/v1/verify* -> http://auth:9999/verify*'
     url: http://auth:9999/verify
     routes:
       - name: auth-v1-open

@@ -563,7 +563,7 @@ services:
 
   vector:
     container_name: supabase-vector
-    image: timberio/vector:{{ sb_vector_version }}
+    image: {{ sb_vector_version }}
     restart: unless-stopped
     volumes:
       - ./volumes/logs/vector.yml:/etc/vector/vector.yml:ro,z

@@ -204,7 +204,7 @@ GOOGLE_SECRET={{ google_secret }}
 
 GITHUB_ENABLED={{ github_enabled }}
 GITHUB_CLIENT_ID={{ github_client_id }}
-GITHUB_SECRET={{ github_client_secret }}
+GITHUB_SECRET={{ github_secret }}
 
 AZURE_ENABLED={{ azure_enabled }}
 AZURE_CLIENT_ID={{ azure_client_id }}
@@ -218,7 +218,7 @@ AZURE_SECRET={{ azure_secret }}
 # SMS_OTP_EXP=60
 # SMS_OTP_LENGTH=6
 # SMS_MAX_FREQUENCY=60s
-# SMS_TEMPLATE=Your code is {{ .Code }}
+# SMS_TEMPLATE=Your code is {{ '{{ .Code }}' }}
 
 # SMS_TWILIO_ACCOUNT_SID=
 # SMS_TWILIO_AUTH_TOKEN=

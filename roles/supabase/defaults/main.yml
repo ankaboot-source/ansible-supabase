@@ -13,6 +13,6 @@ sb_analytics_version: supabase/logflare:1.31.2
 sb_db_version: supabase/postgres:15.8.1.085
 sb_vector_version: timberio/vector:0.53.0-alpine
 sb_supavisor_version: supabase/supavisor:2.7.4
-caddy_cert_base_path: "/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory"
+caddy_cert_base_path: "/home/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory"
 postgres_cert_path: "/opt/postgres-certs"
 postgres_domain: "your-domain.com"
