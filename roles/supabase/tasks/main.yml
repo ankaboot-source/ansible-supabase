@@ -26,6 +26,55 @@
     group: root
     mode: "0755"
 
+- name: Check if Caddy certificate exists
+  ansible.builtin.stat:
+    path: "{{ caddy_cert_base_path }}/{{ postgres_domain }}/{{ postgres_domain }}.crt"
+  register: caddy_cert
+
+- name: Ensure Certs directory exists
+  ansible.builtin.file:
+    path: "{{ postgres_cert_path }}"
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0755"
+
+- name: Copy Postgres SSL certificate
+  ansible.builtin.copy:
+    src: "{{ caddy_cert_base_path }}/{{ postgres_domain }}/{{ postgres_domain }}.crt"
+    dest: "{{ postgres_cert_path }}/server.crt"
+    remote_src: yes
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0644"
+  when: caddy_cert.stat.exists
+
+- name: Copy Postgres SSL key
+  ansible.builtin.copy:
+    src: "{{ caddy_cert_base_path }}/{{ postgres_domain }}/{{ postgres_domain }}.key"
+    dest: "{{ postgres_cert_path }}/server.key"
+    remote_src: yes
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0600"
+  when: caddy_cert.stat.exists
+
+- name: Validate Postgres cert exists
+  stat:
+    path: "{{ postgres_cert_path }}/server.crt"
+  register: pg_cert
+
+- name: Generate self-signed cert if Caddy's cert is missing
+  command: >
+    openssl req -x509 -nodes -days 365
+    -newkey rsa:2048
+    -keyout {{ postgres_cert_path }}/server.key
+    -out {{ postgres_cert_path }}/server.crt
+    -subj "/CN={{ postgres_domain }}"
+  args:
+    creates: "{{ postgres_cert_path }}/server.crt"
+  when: not pg_cert.stat.exists
+
 - name: Create Supabase files
   template:
     src: "{{ item.src }}.j2"
