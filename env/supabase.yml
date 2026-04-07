@@ -44,26 +44,26 @@ postgres_db_pwd: changeit # REQUIRED
 sb_jwt_secret: changeit # REQUIRED
 sb_anon_key: changeit # REQUIRED
 sb_service_role_key: changeit #REQUIRED
-secret_key_base: UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq
-vault_enc_key: your-32-character-encryption-key
-pg_meta_crypto_key: your-encryption-key-32-chars-min
-logflare_public_access_token: your-super-secret-and-long-logflare-key-public
-logflare_private_access_token: your-super-secret-and-long-logflare-key-private
-s3_protocol_access_key_id: 625729a08b95bf1b7ff351a663f3a23c
-s3_protocol_access_key_secret: 850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907
+secret_key_base: UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq # generate with: openssl rand -base64 48
+vault_enc_key: d68a154935ac72e1e6b57f9e674303ca # generate with: openssl rand -hex 16
+pg_meta_crypto_key: 4WM7KAQuEq1uTnbLgvdm+LiZHwR5eYqP # generate with: openssl rand -base64 24
+logflare_public_access_token: whrJsrVk0wQOS5TiCyBzqlpygs+nzC/m # generate with: openssl rand -base64 24
+logflare_private_access_token: whrJsrVk0wQOS5TiCyBzqlpygs+nzC/m # generate with: openssl rand -base64 24
+s3_protocol_access_key_id: 3a40fd8b8349b47dbbe00f902e008e0a # generate with: openssl rand -hex 16
+s3_protocol_access_key_secret: afe4dd67f7903937c04393a31784c52ad9c5b80fffcdcd9d251c3311af84703f # generate with openssl: rand -hex 32
 pooler_tenant_id: your-tenant-id
 
 #### Asymmetric key pair (ES256) and opaque api keys
 # Opaque API key for client-side use (anon role).
-sb_publishable_key: changeit # Optional
+sb_publishable_key:
 # Opaque API key for server-side use (service_role). Never expose in client code.
-sb_secret_key: changeit # Optional
+sb_secret_key:
 # JSON array of signing JWKs (EC private + legacy symmetric).
 # Used by Auth.
-sb_jwt_keys: changeit # Optional
+sb_jwt_keys:
 # JWKS for token verification (EC public + legacy symmetric).
 # Used by PostgREST, Realtime, Storage to verify tokens.
-sb_jwt_jwks: changeit # Optional
+sb_jwt_jwks:
 
 
 site_url: https://app.example.com # Website url
@@ -80,15 +80,15 @@ smtp_password: changeit
 smtp_sender_name: changeit
 
 #### Oauth / Social login providers
-google_enabled: true
+google_enabled: false
 google_client_id: changeit
 google_secret: changeit
 
-github_enabled: true
+github_enabled: false
 github_client_id: changeit
 github_secret: changeit
 
-azure_enabled: true
+azure_enabled: false
 azure_client_id: changeit
 azure_secret: changeit
 
@@ -129,6 +129,7 @@ discord_guild_id: changeit # your Discord server ID
 ## Common vars between Gitlab, GitHub & Discord
 base_auth_domain: auth.example.com # sub-domain will be used as an authentication endpoint
 root_domain: example.com # for storing cookies
+jwt_shared_key: eyYAr3s7574nXqOGSf8++mj/Tzt5p4szX/uxLGyGDr4= # to generate a key run: openssl rand -base64 32
 
 #### Caddyfile configuration
 # set paths to [] if you don’t want to handle any path outside of SSO protection 
@@ -164,3 +165,5 @@ projects:
 fail2ban_packages:
   - fail2ban
 fail2ban_service: fail2ban
+
+

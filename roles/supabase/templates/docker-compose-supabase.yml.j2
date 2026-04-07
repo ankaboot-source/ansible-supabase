@@ -516,7 +516,13 @@ services:
         "-c",
         "log_rotation_age=7d",
         "-c",
-        "log_statement=all"
+        "log_statement=all",
+        "-c",
+        "ssl=on",
+        "-c",
+        "ssl_cert_file=/etc/postgres/certs/server.crt",
+        "-c",
+        "ssl_key_file=/etc/postgres/certs/server.key"
       ]
     restart: unless-stopped
     ports:
@@ -552,10 +558,12 @@ services:
       - db-config:/etc/postgresql-custom
       # Mount postgresql logs into host 
       - /var/log/postgresql:/var/log/postgresql:Z
+      # Mount SSL certs
+      - /opt/postgres-certs:/etc/postgres/certs:ro
 
   vector:
     container_name: supabase-vector
-    image: timberio/vector:{{ sb_vector_version }}
+    image: {{ sb_vector_version }}
     restart: unless-stopped
     volumes:
       - ./volumes/logs/vector.yml:/etc/vector/vector.yml:ro,z
