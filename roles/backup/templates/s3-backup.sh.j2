@@ -6,6 +6,7 @@ export DEBIAN_FRONTEND=noninteractive
 ##### Defaults #####
 SUPABASE_CLI_PATH=/usr/bin/supabase
 RCLONE_PATH=/usr/bin/rclone
+RCLONE_DOCKER_IMAGE="{{ rclone_docker_image }}"
 type="s3"
 data_dump_file="data-dump.sql"
 schema_dump_file="schema-dump.sql"
@@ -24,19 +25,21 @@ show_help() {
     echo "  $0 -p <db_password> -k <access_key> -s <secret_key> -e <endpoint> -r <region> [options]"
     echo ""
     echo "Options:"
-    echo "  -p, --db-password          Database password (required)"
+    echo "  -p, --db-password       Database password (required)"
     echo "  -k, --access-key        S3 access key (required)"
     echo "  -s, --secret-key        S3 secret key (required)"
     echo "  -e, --endpoint          S3 endpoint (required)"
     echo "  -t, --type              Storage type (default: s3)"
-    echo "  -n, --s3-remote-name    Rclone remote name"
+    echo "  -n, --remote-name       Rclone remote name"
     echo "  -b, --bucket-name       Bucket/path (default: backups)"
+    echo "  -v, --provider          S3 provider (default: Other)"
+    echo "  -x, --exclude-tables    Comma-separated tables to exclude"
     echo "  --help                  Show help"
 }
 
 ##### Parse args #####
 OPTS=$(getopt -o t:k:s:e:p:n:b: \
---long type:,access-key:,secret-key:,endpoint:,db-password:,s3-remote-name:,bucket:,help \
+--long type:,access-key:,secret-key:,endpoint:,db-password:,remote-name:,bucket-name:,provider:,exclude-tables:,help \
 -n "$0" -- "$@")
 
 if [ $? != 0 ]; then show_help; exit 1; fi
@@ -51,6 +54,8 @@ while true; do
         -p | --db-password ) db_password="$2"; shift 2 ;;
         -n | --remote-name ) s3_remote_name="$2"; shift 2 ;;
         -b | --bucket-name ) s3_bucket_name="$2"; shift 2 ;;
+        -v | --provider ) s3_provider="$2"; shift 2 ;;
+        -x | --exclude-tables ) exclude_tables="$2"; shift 2 ;;
         --help ) show_help; exit 0 ;;
         -- ) shift; break ;;
         * ) break ;;
@@ -58,7 +63,7 @@ while true; do
 done
 
 ##### Validate #####
-if [ -z "$access_key" ] || [ -z "$secret_key" ] || [ -z "$endpoint" ] || [ -z "$password" ]; then
+if [ -z "$s3_access_key" ] || [ -z "$s3_secret_key" ] || [ -z "$s3_endpoint" ] || [ -z "$db_password" ] || [ -z "$s3_remote_name" ] || [ -z "$s3_bucket_name" ] || [ -z "$s3_provider" ] || [ -z "$exclude_tables" ]; then
     echo "Error: Missing required arguments."
     show_help
     exit 1
@@ -109,7 +114,7 @@ docker run --rm \
   -e "RCLONE_CONFIG_${s3_remote_name}_TYPE=$type" \
   -e "RCLONE_CONFIG_${s3_remote_name}_PROVIDER=$s3_provider" \
   -e "RCLONE_CONFIG_${s3_remote_name}_ACCESS_KEY_ID=$s3_access_key" \
-  -e "RCLONE_CONFIG_${s3_remote_name}_SECRET_ACCES!S_KEY=$s3_secret_key" \
+  -e "RCLONE_CONFIG_${s3_remote_name}_SECRET_ACCESS_KEY=$s3_secret_key" \
   -e "RCLONE_CONFIG_${s3_remote_name}_ENDPOINT=$s3_endpoint" \
   "$RCLONE_DOCKER_IMAGE" \
   copy "/data" "$s3_remote_name:$s3_bucket_name" \

@@ -157,7 +157,6 @@ projects:
     frontend: "localhost:3001" # Grafana dashboard
     secure: false # Grafana will be using its own oauth system
 
-
 ############
 # FAIL2BAN #
 ############
@@ -166,12 +165,9 @@ fail2ban_packages:
   - fail2ban
 fail2ban_service: fail2ban
 
-
 #############
 # S3 Backup #
 #############
-
-# Complete documentation https://rclone.org/s3/
 
 # Dump Settings
 exclude_tables: "" # List of schema.tables to exclude from data-only dump. set exclude_tables: "table_1,table_2" to exclude
@@ -181,6 +177,7 @@ backup_cron_hour: "2"    # 2 AM
 backup_cron_minute: "0"   # At minute 0
 
 # Upload Settings
+# Complete documentation https://rclone.org/s3/
 s3_remote_name: changeit # e.g r2, gs, supabase, spaces, snowball...
 s3_provider: changeit # e.g GCS, Hetzner, DigitalOcean, Cloudflare...
 s3_access_key: changeit
