@@ -167,3 +167,23 @@ fail2ban_packages:
 fail2ban_service: fail2ban
 
 
+#############
+# S3 Backup #
+#############
+
+# Complete documentation https://rclone.org/s3/
+
+# Dump Settings
+exclude_tables: "" # List of schema.tables to exclude from data-only dump. set exclude_tables: "table_1,table_2" to exclude
+
+# Backup schedule (24-hour format)
+backup_cron_hour: "2"    # 2 AM
+backup_cron_minute: "0"   # At minute 0
+
+# Upload Settings
+s3_remote_name: changeit # e.g r2, gs, supabase, spaces, snowball...
+s3_provider: changeit # e.g GCS, Hetzner, DigitalOcean, Cloudflare...
+s3_access_key: changeit
+s3_secret_key: changeit
+s3_endpoint: changeit
+s3_bucket_name: changeit # e.g data-bucket...

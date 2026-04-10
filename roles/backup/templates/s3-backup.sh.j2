@@ -1,0 +1,128 @@
+#!/bin/sh
+
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+
+##### Defaults #####
+SUPABASE_CLI_PATH=/usr/bin/supabase
+RCLONE_PATH=/usr/bin/rclone
+type="s3"
+data_dump_file="data-dump.sql"
+schema_dump_file="schema-dump.sql"
+timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
+
+
+
+##### Required packages ########
+##### apt update && apt install -y curl wget gzip unzip
+#####
+
+
+##### Help #####
+show_help() {
+    echo "Usage:"
+    echo "  $0 -p <db_password> -k <access_key> -s <secret_key> -e <endpoint> -r <region> [options]"
+    echo ""
+    echo "Options:"
+    echo "  -p, --db-password          Database password (required)"
+    echo "  -k, --access-key        S3 access key (required)"
+    echo "  -s, --secret-key        S3 secret key (required)"
+    echo "  -e, --endpoint          S3 endpoint (required)"
+    echo "  -t, --type              Storage type (default: s3)"
+    echo "  -n, --s3-remote-name    Rclone remote name"
+    echo "  -b, --bucket-name       Bucket/path (default: backups)"
+    echo "  --help                  Show help"
+}
+
+##### Parse args #####
+OPTS=$(getopt -o t:k:s:e:p:n:b: \
+--long type:,access-key:,secret-key:,endpoint:,db-password:,s3-remote-name:,bucket:,help \
+-n "$0" -- "$@")
+
+if [ $? != 0 ]; then show_help; exit 1; fi
+eval set -- "$OPTS"
+
+while true; do
+    case "$1" in
+        -t | --type ) type="$2"; shift 2 ;;
+        -k | --access-key ) s3_access_key="$2"; shift 2 ;;
+        -s | --secret-key ) s3_secret_key="$2"; shift 2 ;;
+        -e | --endpoint ) s3_endpoint="$2"; shift 2 ;;
+        -p | --db-password ) db_password="$2"; shift 2 ;;
+        -n | --remote-name ) s3_remote_name="$2"; shift 2 ;;
+        -b | --bucket-name ) s3_bucket_name="$2"; shift 2 ;;
+        --help ) show_help; exit 0 ;;
+        -- ) shift; break ;;
+        * ) break ;;
+    esac
+done
+
+##### Validate #####
+if [ -z "$access_key" ] || [ -z "$secret_key" ] || [ -z "$endpoint" ] || [ -z "$password" ]; then
+    echo "Error: Missing required arguments."
+    show_help
+    exit 1
+fi
+
+echo "===> Starting backup at $timestamp"
+
+##### Install Supabase CLI if needed #####
+if [ ! -f "$SUPABASE_CLI_PATH" ]; then
+    echo "Installing Supabase CLI..."
+    version=$(curl -s https://api.github.com/repos/supabase/cli/releases/latest | grep -oP '(?<=download/v)[^/]+' | head -n 1)
+    wget https://github.com/supabase/cli/releases/download/v"$version"/supabase_"$version"_linux_amd64.deb
+    dpkg -i supabase_"$version"_linux_amd64.deb
+else
+    echo "Supabase CLI already installed"
+fi
+
+##### Dump database #####
+EXCLUDE_TABLES="${EXCLUDE_TABLES:-}"
+
+DATA_FILE="${timestamp}-${data_dump_file}"
+SCHEMA_FILE="${timestamp}-${schema_dump_file}"
+
+export PGPASSWORD="$db_password"
+
+echo "Dumping data..."
+supabase db dump \
+  --db-url "postgresql://postgres@localhost:5432/postgres" \
+  --data-only \
+  ${EXCLUDE_TABLES:+-x "$EXCLUDE_TABLES"} \
+  -f "$DATA_FILE"
+
+echo "Dumping schema..."
+supabase db dump \
+  --db-url "postgresql://postgres@localhost:5432/postgres" \
+  -f "$SCHEMA_FILE"
+
+gzip "$DATA_FILE"
+gzip "$SCHEMA_FILE"
+
+##### Upload #####
+echo "Uploading backups..."
+
+CURRENT_DIR=$(pwd)
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$CURRENT_DIR:/data:ro" \
+  -e "RCLONE_CONFIG_${s3_remote_name}_TYPE=$type" \
+  -e "RCLONE_CONFIG_${s3_remote_name}_PROVIDER=$s3_provider" \
+  -e "RCLONE_CONFIG_${s3_remote_name}_ACCESS_KEY_ID=$s3_access_key" \
+  -e "RCLONE_CONFIG_${s3_remote_name}_SECRET_ACCES!S_KEY=$s3_secret_key" \
+  -e "RCLONE_CONFIG_${s3_remote_name}_ENDPOINT=$s3_endpoint" \
+  "$RCLONE_DOCKER_IMAGE" \
+  copy "/data" "$s3_remote_name:$s3_bucket_name" \
+  --include "/${DATA_FILE}.gz" \
+  --include "/${SCHEMA_FILE}.gz" \
+  --transfers 4
+
+echo "Backup uploaded successfully!"
+
+##### Cleanup #####
+cleanup() {
+  rm -f "${SCHEMA_FILE:-}.gz" "${DATA_FILE:-}.gz"
+}
+trap cleanup EXIT
+
+echo "Done."

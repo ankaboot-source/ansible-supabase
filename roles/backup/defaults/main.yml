@@ -1,0 +1,3 @@
+---
+
+RCLONE_DOCKER_IMAGE: "rclone/rclone:latest"
