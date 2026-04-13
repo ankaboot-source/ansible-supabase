@@ -1,0 +1,29 @@
+---
+
+- name: Create backup script from template
+  template:
+    src: s3-backup.sh.j2
+    dest: /usr/local/bin/s3-backup.sh
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Create log directory for backup
+  file:
+    path: /var/log/supabase-backup
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Setup cron job for backup
+  cron:
+    name: "Supabase database backup"
+    minute: "{{ backup_cron_minute | default('0') }}"
+    hour: "{{ backup_cron_hour | default('2') }}"
+    day: "{{ backup_cron_day | default('*') }}"
+    month: "{{ backup_cron_month | default('*') }}"
+    weekday: "{{ backup_cron_weekday | default('*') }}"
+    job: "/usr/local/bin/s3-backup.sh -p '{{ postgres_db_pwd }}' -k '{{ s3_access_key }}' -s '{{ s3_secret_key }}' -e '{{ s3_endpoint }}' -n '{{ s3_remote_name }}' -b '{{ s3_bucket_name }}' -v '{{ s3_provider }} -x '{{ exclude_tables }} ' >> /var/log/supabase-backup/backup-$(date +\\%Y\\%m\\%d).log 2>&1"
+    user: root
+    state: present
