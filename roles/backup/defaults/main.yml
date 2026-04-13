@@ -1,0 +1,3 @@
+---
+
+rclone_docker_image: "rclone/rclone:latest"
