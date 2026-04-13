@@ -22,7 +22,7 @@ timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
 ##### Help #####
 show_help() {
     echo "Usage:"
-    echo "  $0 -p <db_password> -k <access_key> -s <secret_key> -e <endpoint> -r <region> [options]"
+    echo "  $0 -p <db_password> -k <access_key> -s <secret_key> -e <endpoint> -n <remote_name> -b <bucket_name> -v <provider> -x <exclude_tables>  [options]"
     echo ""
     echo "Options:"
     echo "  -p, --db-password       Database password (required)"
@@ -63,7 +63,7 @@ while true; do
 done
 
 ##### Validate #####
-if [ -z "$s3_access_key" ] || [ -z "$s3_secret_key" ] || [ -z "$s3_endpoint" ] || [ -z "$db_password" ] || [ -z "$s3_remote_name" ] || [ -z "$s3_bucket_name" ] || [ -z "$s3_provider" ] || [ -z "$exclude_tables" ]; then
+if [ -z "$s3_access_key" ] || [ -z "$s3_secret_key" ] || [ -z "$s3_endpoint" ] || [ -z "$db_password" ] || [ -z "$s3_remote_name" ] || [ -z "$s3_bucket_name" ] || [ -z "$s3_provider" ]; then
     echo "Error: Missing required arguments."
     show_help
     exit 1
