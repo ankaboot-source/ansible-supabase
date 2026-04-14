@@ -38,7 +38,7 @@ show_help() {
 }
 
 ##### Parse args #####
-OPTS=$(getopt -o t:k:s:e:p:n:b: \
+OPTS=$(getopt -o t:k:s:e:p:n:b:v:x: \
 --long type:,access-key:,secret-key:,endpoint:,db-password:,remote-name:,bucket-name:,provider:,exclude-tables:,help \
 -n "$0" -- "$@")
 
