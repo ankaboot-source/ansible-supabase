@@ -1,3 +1,5 @@
+{% for project, cfg in projects.items() %}
+{% if cfg.oidc_enabled %}
 {
 	order authenticate before respond
 	order authorize before basicauth
@@ -43,7 +45,9 @@
 		}
 	}
 }
+{% endif %}
 
+{% if cfg.oidc_enabled %}
 https://{{ base_auth_domain }} {
     log {
         output file /var/log/caddy/caddy-auth.log {
@@ -52,31 +56,66 @@ https://{{ base_auth_domain }} {
             roll_keep_for 24h
         }
     }
+
     authenticate with myportal
 }
+{% endif %}
 
-{% for project, cfg in projects.items() %}
-https://{{ cfg.project_subdomain }} {
+https://{{ cfg.domain }} {
 
     log {
-        output file /var/log/caddy/{{cfg.log_file}}.log {
+        output file /var/log/caddy/{{ cfg.log_file }}.log {
             roll_size 10MiB
             roll_keep 10
             roll_keep_for 24h
         }
     }
-	
-    {% for path in cfg.paths %}
-    handle {{ path }} {
-        reverse_proxy {{ cfg.backend }}
-    }
+
+    {% if cfg.allowed_ips is defined and cfg.allowed_ips | length > 0 %}
+      @allowedIPs {
+          {% for ip in cfg.allowed_ips %}
+          remote_ip {{ ip }}
+          {% endfor %}
+      }
+
+        handle @allowedIPs {
+    {% endif %}
+    {% for upstream in cfg.upstreams %}   
+        {% if upstream.basicauth is defined %}
+            {% for rule in upstream.basicauth %}
+                handle {{ rule.path }} {
+                    basic_auth {
+                        {{ rule.username }} {{ rule.password }}
+                    }
+                    {% if upstream.oidc %}
+                        authorize with mypolicy
+                    {% endif %}
+
+                    reverse_proxy {{ upstream.targets | join(" ") }}
+                }
+            {% endfor %}
+        {% endif %}
+
+        {% if upstream.paths is defined %}
+            {% for path in upstream.paths %}
+                handle {{ path }} {
+                    {% if upstream.oidc %}
+                        authorize with mypolicy
+                    {% endif %}
+
+                    reverse_proxy {{ upstream.targets | join(" ") }}
+                }
+            {% endfor %}
+        {% endif %}
     {% endfor %}
 
-    handle {
-        {% if cfg.secure %}
-        authorize with mypolicy
-        {% endif %}
-        reverse_proxy {{ cfg.frontend }}
-    }
+    {% if cfg.allowed_ips is defined and cfg.allowed_ips | length > 0 %}
+        }
+        # Deny all other IPs
+        handle {
+            respond "Forbidden" 403
+        }
+    {% endif %}
 }
 {% endfor %}
+

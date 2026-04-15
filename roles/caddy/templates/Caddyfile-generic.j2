@@ -1,41 +1,56 @@
 {% for project, cfg in projects.items() %}
 {% if cfg.oidc_enabled %}
 {
-	order authenticate before respond
-	order authorize before basicauth
+    order authenticate before respond
+    order authorize before basic_auth
 
-	security {
+    security {
+        oauth identity provider {{ oidc_driver }} {
+            realm {{ oidc_realm }}
+            driver {{ oidc_driver }}
+            client_id {{ oidc_client_id }}
+            client_secret {{ oidc_client_secret }}
+            scopes openid email profile
+            base_auth_url {{ base_auth_url }}
+            metadata_url {{ metadata_url }}
+        }
 
-                oauth identity provider github {{ github_oauth_client_id }} {{ github_oauth_client_secret }}
+        authentication portal myportal {
+            crypto default token lifetime 3600
+            crypto key sign-verify {env.JWT_SHARED_KEY}
+            enable identity provider {{ oidc_driver }}
+            cookie domain {{ root_domain }}
 
-                authentication portal myportal {
-			crypto default token lifetime 3600
-			enable identity provider github
-                        crypto key sign-verify {env.JWT_SHARED_KEY}
-			cookie domain {{ root_domain }}
-			ui {
-				links {
-					"My Identity" "/whoami" icon "las la-user"
-				}
-			}
+            ui {
+                links {
+                    "My Identity" "/whoami" icon "las la-user"
+                }
+            }
 
-			transform user {
-				match realm github
-                                match sub {{ github_allow_list }}
-				action add role authp/admin
-			}
-		}
+            transform user {
+                match realm generic
+                action add role authp/user
+                ui link "File Server" {{ app_url }} icon "las la-star"
+            }
 
-		authorization policy mypolicy {
-			set auth url https://{{ base_auth_domain }}/oauth2/github
-			crypto key sign-verify {env.JWT_SHARED_KEY}
-                        allow roles authp/admin
-			validate bearer header
-			inject headers with claims
-		}
-	}
+            transform user {
+                match realm {{ oidc_realm }}
+                match email {{ generic_allow_list }}
+                action add role authp/admin
+            }
+        }
+
+        authorization policy mypolicy {
+            set auth url https://{{ base_auth_domain }}/oauth2/{{ oidc_driver }}
+            crypto key verify {env.JWT_SHARED_KEY}
+            allow roles authp/admin
+            validate bearer header
+            inject headers with claims
+        }
+    }
 }
 {% endif %}
+
 
 {% if cfg.oidc_enabled %}
 https://{{ base_auth_domain }} {
@@ -46,6 +61,7 @@ https://{{ base_auth_domain }} {
             roll_keep_for 24h
         }
     }
+
     authenticate with myportal
 }
 {% endif %}
@@ -69,16 +85,13 @@ https://{{ cfg.domain }} {
 
         handle @allowedIPs {
     {% endif %}
-    {% for upstream in cfg.upstreams %}
-      
+    {% for upstream in cfg.upstreams %}   
         {% if upstream.basicauth is defined %}
-
             {% for rule in upstream.basicauth %}
                 handle {{ rule.path }} {
                     basic_auth {
                         {{ rule.username }} {{ rule.password }}
                     }
-
                     {% if upstream.oidc %}
                         authorize with mypolicy
                     {% endif %}
@@ -91,7 +104,6 @@ https://{{ cfg.domain }} {
         {% if upstream.paths is defined %}
             {% for path in upstream.paths %}
                 handle {{ path }} {
-
                     {% if upstream.oidc %}
                         authorize with mypolicy
                     {% endif %}
@@ -111,3 +123,4 @@ https://{{ cfg.domain }} {
     {% endif %}
 }
 {% endfor %}
+
