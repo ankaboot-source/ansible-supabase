@@ -110,16 +110,13 @@
 - name: Copy Caddyfile to /etc/caddy
   become: true
   template:
-    src: "Caddyfile-{{ SSO_PROVIDER }}.j2"
-    dest: "/etc/caddy/Caddyfile"
-    mode: "0644"
+    src: "{{ item.src }}.j2"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode }}"
     owner: root
     group: root
+  with_items:
+    - { src: "Caddyfile-{{ SSO_PROVIDER }}", dest: "/etc/caddy/Caddyfile", mode: '0644' }
 
-- name: Reload systemd and start Caddy
-  become: true
-  ansible.builtin.systemd:
-    name: caddy
-    state: started
-    enabled: yes
-    daemon_reload: yes
+- name: fmt Caddy conf
+  ansible.builtin.command: caddy fmt /etc/caddy/Caddyfile --overwrite
