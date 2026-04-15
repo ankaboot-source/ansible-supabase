@@ -145,7 +145,7 @@ jwt_shared_key: eyYAr3s7574nXqOGSf8++mj/Tzt5p4szX/uxLGyGDr4= # to generate a key
 projects:
   supabase:
     log_file: supabase-access
-    domain: "sb.leadminer.io"
+    domain: "sb.example.com"
     allowed_ips:
       - 123.123.123.123
       - 111.111.111.111
@@ -157,8 +157,9 @@ projects:
         oidc: true
         basicauth:
           - path: /project/default
-            username: sb
-            password: $2a$14$t3jQ0mIR7Mg0kLwP/BgCKu3bTGtrqRzz3MHRnq0wapfFjypEhosvu
+            username: you_user
+            # Generate with caddy hash-password
+            password: $2at3jQ0mIR7Mg0kLwP/BgCKRzz3MRnq0wapfFjypEhosvu
       # API routes
       - targets: ["localhost:8000"]
         paths:
@@ -171,7 +172,7 @@ projects:
 
   monitor:
     log_file: monitor-access
-    domain: "mon.leadminer.io"
+    domain: "monitor.example.com"
     oidc_enabled: false
     upstreams:
       - targets: ["localhost:3001"]
