@@ -100,15 +100,25 @@ openai_api_key: changeit
 #########
 
 #### Provider configurations 
-SSO_PROVIDER: github # available: github, gitlab & discord
+SSO_PROVIDER: github # available: Generic, github, gitlab & discord
 
 ############### ! UPDATE BELOW VARIABLES BASED ON SSO_PROVIDER YOU CHOSE #################
+
+##Generic #https://github.com/authcrunch/authcrunch.github.io/blob/main/assets/conf/oauth/generic/Caddyfile
+oidc_realm: generic
+oidc_driver: generic
+oidc_client_id: changeit
+oidc_client_secret: changeit
+base_auth_url: changeit #e.g https://keycloak.domain.com/
+metadata_url: changit #e.g https://keycloak.myfiosgateway.com/.well-known/openid-configuration
+app_url: changeit # your app or dashboard protected with OIDC e.g https://myapp.domain.com
+generic_allow_list: "user1@gmail.com user2@gmail.com" # Allowed users
 
 ##Gitlab #https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0009-gitlab
 gitlab_domain: gitlab.example.com
 gitlab_oauth_client_id: changeit
 gitlab_oauth_client_secret: changeit
-gitlab_allow_list: "user1@example.com user2@example.com" #SSO allow list
+gitlab_allow_list: "user1@example.com user2@example.com"
 gitlab_group_filters:
   - group1
   - ^a #all groups starting with a
@@ -132,30 +142,43 @@ root_domain: example.com # for storing cookies
 jwt_shared_key: eyYAr3s7574nXqOGSf8++mj/Tzt5p4szX/uxLGyGDr4= # to generate a key run: openssl rand -base64 32
 
 #### Caddyfile configuration
-# set paths to [] if you don’t want to handle any path outside of SSO protection 
-# set secure: false to disable Gitlab SSO
 projects:
   supabase:
     log_file: supabase-access
-    project_subdomain: "supa.example.com"
-    backend: "localhost:8000" # kong gateway
-    paths:
-      - /rest/v1/*
-      - /auth/v1/*
-      - /realtime/v1/*
-      - /storage/v1/*
-      - /functions/v1/*
-      - /upload/*
-    frontend: "localhost:3000" # Supabase studio dashboard
-    secure: true
+    domain: "sb.example.com"
+    allowed_ips:
+      - 123.123.123.123
+      - 111.111.111.111
+    oidc_enabled: true
+    upstreams:
+      # Dashboard with optional auth
+      - targets: ["localhost:3000"]
+        paths: [""]
+        oidc: true
+        basicauth:
+          - path: /project/default
+            username: you_user
+            # Generate with caddy hash-password
+            password: $2at3jQ0mIR7Mg0kLwP/BgCKRzz3MRnq0wapfFjypEhosvu
+      # API routes
+      - targets: ["localhost:8000"]
+        paths:
+          - /rest/v1/*
+          - /auth/v1/*
+          - /realtime/v1/*
+          - /storage/v1/*
+          - /functions/v1/*
+        oidc: false
 
   monitor:
     log_file: monitor-access
-    project_subdomain: "monitor.example.com"
-    backend:
-    paths: []
-    frontend: "localhost:3001" # Grafana dashboard
-    secure: false # Grafana will be using its own oauth system
+    domain: "monitor.example.com"
+    oidc_enabled: false
+    upstreams:
+      - targets: ["localhost:3001"]
+        paths: [""]
+        oidc: false
+
 
 ############
 # FAIL2BAN #
