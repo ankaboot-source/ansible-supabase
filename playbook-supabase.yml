@@ -1,6 +1,7 @@
 
 - hosts: localhost
   roles:
+   - ufw
    - docker
    - caddy
    - monitor
