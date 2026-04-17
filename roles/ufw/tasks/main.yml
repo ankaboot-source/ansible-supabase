@@ -1,6 +1,6 @@
 ---
 
-- name: Install UFW (cross-platform package manager)
+- name: Install UFW
   become: true
   ansible.builtin.package:
     name: ufw

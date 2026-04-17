@@ -213,7 +213,7 @@ s3_bucket_name: changeit # e.g data-bucket...
 # Firewall #
 ############
 
-#! SSH is enabled by default
+# SSH is allowed always
 firewall_allow:
   - port: 80
   - port: 443
