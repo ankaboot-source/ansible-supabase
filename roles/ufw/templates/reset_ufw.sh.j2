@@ -1,0 +1,53 @@
+#!/bin/bash
+
+LOG_FILE="/var/log/reset_ufw.log"
+
+echo "Start: $(date)" >> "${LOG_FILE}" 2>&1
+
+# RESET UFW
+ufw --force disable >> "${LOG_FILE}" 2>&1
+ufw --force reset >> "${LOG_FILE}" 2>&1
+
+# ALWAYS ALLOW SSH
+ufw allow proto tcp from any to any port 22 >> "${LOG_FILE}" 2>&1
+
+# DENY RULES
+{% for item in firewall_allow %}
+{% if item.port is defined %}
+  {% if item.ip is defined %}
+    {% if item.cidr is defined %}
+	echo "Allow from {{ item.ip }}/{{ item.cidr }} port {{ item.port }}" >> "${LOG_FILE}" 2>&1
+	ufw allow proto tcp from {{ item.ip }}/{{ item.cidr }} to any port {{ item.port }} >> "${LOG_FILE}" 2>&1
+    {% else %}
+	echo "Allow from {{ item.ip }} port {{ item.port }}" >> "${LOG_FILE}" 2>&1
+	ufw allow proto tcp from {{ item.ip }} to any port {{ item.port }} >> "${LOG_FILE}" 2>&1
+    {% endif %}
+  {% else %}
+     echo "Allow port {{ item.port }} from ANY" >> "${LOG_FILE}" 2>&1
+     ufw allow proto tcp from any to any port {{ item.port }} >> "${LOG_FILE}" 2>&1
+  {% endif %}
+{% endif %}
+{% endfor %}
+
+# DENY RULES
+{% for item in firewall_deny %}
+{% if item.port is defined %}
+  {% if item.ip is defined %}
+    {% if item.cidr is defined %}
+	echo "DENY from {{ item.ip }}/{{ item.cidr }} port {{ item.port }}" >> "${LOG_FILE}" 2>&1
+	ufw deny proto tcp from {{ item.ip }}/{{ item.cidr }} to any port {{ item.port }} >> "${LOG_FILE}" 2>&1
+    {% else %}
+	echo "DENY from {{ item.ip }} port {{ item.port }}" >> "${LOG_FILE}" 2>&1
+	ufw deny proto tcp from {{ item.ip }} to any port {{ item.port }} >> "${LOG_FILE}" 2>&1
+    {% endif %}
+  {% else %}
+     echo "DENY port {{ item.port }} from ANY" >> "${LOG_FILE}" 2>&1
+     ufw deny proto tcp from any to any port {{ item.port }} >> "${LOG_FILE}" 2>&1
+  {% endif %}
+{% endif %}
+{% endfor %}
+
+# ENABLE UFW
+ufw --force enable >> "${LOG_FILE}" 2>&1
+
+echo "End: $(date)" >> "${LOG_FILE}" 2>&1

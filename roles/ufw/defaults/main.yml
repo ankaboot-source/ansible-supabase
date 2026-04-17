@@ -1,0 +1,5 @@
+---
+
+firewall_allow:
+  - port: 80
+  - port: 443
