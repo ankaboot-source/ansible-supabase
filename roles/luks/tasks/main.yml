@@ -1,6 +1,12 @@
 ---
 
 ## Safeguard
+
+- name: Skip to next role if already mounted and configured
+  meta: end_role
+  when:
+    - luks_mount_point in ansible_mounts | map(attribute='mount') | list
+
 - name: Get root device
   set_fact:
     root_device: "{{ (ansible_mounts | selectattr('mount', 'equalto', '/') | first).device }}"
@@ -108,7 +114,6 @@
     path: "{{ luks_mount_point }}"
     owner: 105
     group: 106
-    recurse: true
 
 ## Configure automatic LUKS unlocking
 

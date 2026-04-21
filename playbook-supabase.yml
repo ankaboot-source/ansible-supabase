@@ -3,7 +3,8 @@
   become: true
   roles:
    - ufw
-#   - luks
+   - role: luks
+     when: supabase_encryption.enabled
    - docker
    - caddy
    - monitor
