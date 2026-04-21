@@ -103,6 +103,13 @@
     fstype: "{{ luks_filesystem }}"
     state: mounted
 
+- name: Ensure correct ownership on mounted volume
+  file:
+    path: "{{ luks_mount_point }}"
+    owner: 105
+    group: 106
+    recurse: true
+
 ## Configure automatic LUKS unlocking
 
 - name: Get UUID of LUKS device

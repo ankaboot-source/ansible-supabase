@@ -1,7 +1,9 @@
-
+---
 - hosts: localhost
+  become: true
   roles:
    - ufw
+#   - luks
    - docker
    - caddy
    - monitor
