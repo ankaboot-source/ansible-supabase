@@ -1,0 +1,116 @@
+---
+
+## Safeguard
+- name: Prevent using root disk
+  fail:
+    msg: "Refusing to encrypt root device!"
+  when: luks_device in ansible_mounts | map(attribute='device') | list
+
+## Install prerequisites
+
+- name: Install cryptsetup on Debian/Ubuntu
+  ansible.builtin.apt:
+    name:
+      - cryptsetup
+      - cryptsetup-initramfs
+    state: present
+    update_cache: true
+
+- name: Verify cryptsetup is available
+  ansible.builtin.command: cryptsetup --version
+  register: cryptsetup_version
+  changed_when: false
+
+- name: Report version
+  ansible.builtin.debug:
+    msg: "{{ cryptsetup_version.stdout }}"
+
+
+## Create LUKS encrypted volume
+
+- name: Generate key file
+  ansible.builtin.shell: |
+    dd if=/dev/urandom of={{ luks_key_file }} bs=32 count=1
+  args:
+    creates: "{{ luks_key_file }}"
+  no_log: true
+
+- name: Set key file permissions
+  ansible.builtin.file:
+        path: "{{ luks_key_file }}"
+        owner: root
+        group: root
+        mode: '0400'
+
+- name: Check if device is already a LUKS volume
+  ansible.builtin.command: cryptsetup isLuks {{ luks_device }}
+  register: is_luks
+  changed_when: false
+  failed_when: false
+
+- name: Format device with LUKS
+  community.crypto.luks_device:
+    device: "{{ luks_device }}"
+    state: present
+    keyfile: "{{ luks_key_file }}"
+    type: luks2
+    cipher: aes-xts-plain64
+    hash: sha256
+    key_size: 512
+  when: is_luks.rc != 0
+
+- name: Open LUKS volume
+  community.crypto.luks_device:
+    device: "{{ luks_device }}"
+    state: opened
+    name: "{{ luks_name }}"
+    keyfile: "{{ luks_key_file }}"
+
+- name: Check if filesystem exists
+  ansible.builtin.command: blkid /dev/mapper/{{ luks_name }}
+  register: fs_check
+  failed_when: false
+  changed_when: false
+
+- name: Create filesystem on encrypted volume
+  community.general.filesystem:
+    fstype: "{{ luks_filesystem }}"
+    dev: "/dev/mapper/{{ luks_name }}"
+  when: fs_check.rc != 0
+
+- name: Create mount point
+  ansible.builtin.file:
+    path: "{{ luks_mount_point }}"
+    state: directory
+    mode: '0755'
+
+- name: Mount encrypted volume
+  ansible.posix.mount:
+    path: "{{ luks_mount_point }}"
+    src: "/dev/mapper/{{ luks_name }}"
+    fstype: "{{ luks_filesystem }}"
+    state: mounted
+
+## Configure automatic LUKS unlocking
+
+- name: Get UUID of LUKS device
+  ansible.builtin.command: "blkid -s UUID -o value {{ luks_device }}"
+  register: device_uuid
+  changed_when: false
+
+- name: Configure crypttab entries
+  ansible.builtin.lineinfile:
+    path: /etc/crypttab
+    regexp: "^{{ luks_name }}"
+    line: "{{ luks_name }} UUID={{ device_uuid.stdout }} {{ luks_key_file }} luks"
+    create: true
+    mode: '0644'
+  notify: update initramfs
+
+- name: Configure fstab entries
+  ansible.posix.mount:
+    path: "{{ luks_mount_point }}"
+    src: "/dev/mapper/{{ luks_name }}"
+    fstype: "{{ luks_filesystem }}"
+    opts: "{{ mount_options }}"
+    state: present
