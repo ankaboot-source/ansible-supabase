@@ -1,10 +1,22 @@
 ---
 
 ## Safeguard
-- name: Prevent using root disk
+- name: Get root device
+  set_fact:
+    root_device: "{{ (ansible_mounts | selectattr('mount', 'equalto', '/') | first).device }}"
+
+- name: Extract base disk from root device
+  set_fact:
+    root_base_device: "{{ root_device | regex_replace('p?[0-9]+$', '') }}"
+
+- name: Extract base disk from target device
+  set_fact:
+    luks_base_device: "{{ luks_device | regex_replace('p?[0-9]+$', '') }}"
+
+- name: Prevent encrypting root disk
   fail:
-    msg: "Refusing to encrypt root device!"
-  when: luks_device in ansible_mounts | map(attribute='device') | list
+    msg: "Refusing to encrypt root device {{ luks_device }} (root is on {{ root_device }})!"
+  when: luks_base_device == root_base_device
 
 ## Install prerequisites
 

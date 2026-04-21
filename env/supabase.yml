@@ -239,7 +239,7 @@ firewall_deny:
 # At Rest Disk Encryption (LUKS) #
 ##################################
 
-luks_device: /dev/sdb # volume to be encrypted
+luks_device: /dev/disk/by-id/your_volume_name # volume to be encrypted
 luks_name: encrypted_data
 luks_mount_point: /data
 luks_filesystem: ext4
