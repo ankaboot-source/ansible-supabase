@@ -67,9 +67,9 @@ jobs:
             github_secret: '${M3LLM_SUPABASE_GITHUB_SECRET}'
             google_secret: '${M3LLM_SUPABASE_GOOGLE_SECRET}'
             openai_api_key: '${M3LLM_SUPABASE_OPENAI_API_KEY}'
-            google_client_id: 
-            github_client_id: 
-            azure_client_id: 
+            google_client_id: '${M3LLM_SUPABASE_GOOGLE_CLIENT_ID}'
+            github_client_id: '${M3LLM_SUPABASE_GITHUB_CLIENT_ID}'
+            azure_client_id: '${M3LLM_SUPABASE_AZURE_CLIENT_ID}'
             EOF
 
             mv ./env/supabase-custom.yml ./env/supabase.yml
