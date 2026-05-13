@@ -516,13 +516,13 @@ services:
         "-c",
         "log_rotation_age=7d",
         "-c",
-        "log_statement=all",
-        "-c",
-        "ssl=on",
-        "-c",
-        "ssl_cert_file=/etc/postgres/certs/server.crt",
-        "-c",
-        "ssl_key_file=/etc/postgres/certs/server.key"
+        "log_statement=all"
+#        "-c",
+#        "ssl=on",
+#        "-c",
+#        "ssl_cert_file=/etc/postgres/certs/server.crt",
+#        "-c",
+#        "ssl_key_file=/etc/postgres/certs/server.key"
       ]
     restart: unless-stopped
     ports:
