@@ -77,9 +77,9 @@ jobs:
 
             # inject env vars into functions service
             sed -i '/VERIFY_JWT:/a\
-                LITELLM_PROXY_URL: '"'"'${LITELLM_PROXY_URL}"'"'"'\
-                LITELLM_MASTER_KEY: '"'"'${LITELLM_MASTER_KEY}'"'"'\
-                INTERNAL_AUTH_TOKEN: '"'"'${INTERNAL_AUTH_TOKEN}'"'"'
+                  LITELLM_PROXY_URL: '${LITELLM_PROXY_URL}'\
+                  LITELLM_MASTER_KEY: '${LITELLM_MASTER_KEY}'\
+                  INTERNAL_AUTH_TOKEN: '${INTERNAL_AUTH_TOKEN}'
             ' ./roles/supabase/templates/docker-compose-supabase.yml.j2
 
             # Override playbook-supabase.yml
