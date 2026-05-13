@@ -152,7 +152,7 @@ projects:
     oidc_enabled: true
     upstreams:
       # Dashboard with optional auth
-      - targets: ["localhost:3000"]
+      - targets: ["localhost:3001"]
         paths: [""]
         oidc: true
         basicauth:
@@ -175,7 +175,7 @@ projects:
     domain: "monitor.example.com"
     oidc_enabled: false
     upstreams:
-      - targets: ["localhost:3001"]
+      - targets: ["localhost:3002"]
         paths: [""]
         oidc: false
 
