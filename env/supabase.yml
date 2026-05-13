@@ -44,14 +44,14 @@ postgres_db_pwd: changeit # REQUIRED
 sb_jwt_secret: changeit # REQUIRED
 sb_anon_key: changeit # REQUIRED
 sb_service_role_key: changeit #REQUIRED
-secret_key_base: UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq # generate with: openssl rand -base64 48
-vault_enc_key: d68a154935ac72e1e6b57f9e674303ca # generate with: openssl rand -hex 16
-pg_meta_crypto_key: 4WM7KAQuEq1uTnbLgvdm+LiZHwR5eYqP # generate with: openssl rand -base64 24
-logflare_public_access_token: whrJsrVk0wQOS5TiCyBzqlpygs+nzC/m # generate with: openssl rand -base64 24
-logflare_private_access_token: whrJsrVk0wQOS5TiCyBzqlpygs+nzC/m # generate with: openssl rand -base64 24
-s3_protocol_access_key_id: 3a40fd8b8349b47dbbe00f902e008e0a # generate with: openssl rand -hex 16
-s3_protocol_access_key_secret: afe4dd67f7903937c04393a31784c52ad9c5b80fffcdcd9d251c3311af84703f # generate with openssl: rand -hex 32
-pooler_tenant_id: your-tenant-id
+secret_key_base: changeit # generate with: openssl rand -base64 48
+vault_enc_key: changeit # generate with: openssl rand -hex 16
+pg_meta_crypto_key: changeit # generate with: openssl rand -base64 24
+logflare_public_access_token: changeit # generate with: openssl rand -base64 24
+logflare_private_access_token: changeit # generate with: openssl rand -base64 24
+s3_protocol_access_key_id: changeit # generate with: openssl rand -hex 16
+s3_protocol_access_key_secret: changeit # generate with openssl: rand -hex 32
+pooler_tenant_id: changeit
 
 #### Asymmetric key pair (ES256) and opaque api keys
 # Opaque API key for client-side use (anon role).
@@ -72,10 +72,10 @@ api_external_url: https://supa.example.com # For supabase studio # REQUIRED
 ## Email auth
 enable_email_signup: true
 enable_email_autoconfirm: false
-smtp_admin_email: user@example.com
-smtp_host: mail.example.com
+smtp_admin_email: changeit # user@example.com
+smtp_host: changeit # mail.example.com
 smtp_port: 587
-smtp_user: user@example.com
+smtp_user: changeit # user@example.com
 smtp_password: changeit
 smtp_sender_name: changeit
 
