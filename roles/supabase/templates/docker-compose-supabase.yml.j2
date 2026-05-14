@@ -60,8 +60,6 @@ services:
     volumes:
       - ./volumes/snippets:/app/snippets:Z
       - ./volumes/functions:/app/edge-functions:Z
-    networks:
-      - shared-net
 
   kong:
     container_name: supabase-kong
@@ -71,7 +69,6 @@ services:
       default:
         aliases:
           - api-gw
-      shared-net: {}
     healthcheck:
       test: ["CMD", "kong", "health"]
       interval: 5s
@@ -236,8 +233,6 @@ services:
      
       # Uncomment to bypass nonce check in ID Token flow. Commonly set to true when using Google Sign In on mobile.
       #GOTRUE_EXTERNAL_SKIP_NONCE_CHECK: true
-    networks:
-      - shared-net
 
   rest:
     container_name: supabase-rest
@@ -262,8 +257,6 @@ services:
       [
         "postgrest"
       ]
-    networks:
-      - shared-net
 
   realtime:
     # This container name looks inconsistent but is correct because realtime constructs tenant id by parsing the subdomain
@@ -305,8 +298,6 @@ services:
       SEED_SELF_HOST: "true"
       RUN_JANITOR: "true"
       DISABLE_HEALTHCHECK_LOGGING: "true"
-    networks:
-      - shared-net
 
 
   # To use S3 backed storage: docker compose -f docker-compose.yml -f docker-compose.s3.yml up
@@ -368,9 +359,6 @@ services:
       S3_PROTOCOL_ACCESS_KEY_SECRET: ${S3_PROTOCOL_ACCESS_KEY_SECRET}
     volumes:
       - ./volumes/storage:/var/lib/storage:z
-    networks:
-      - shared-net
-
 
   imgproxy:
     container_name: supabase-imgproxy
@@ -394,8 +382,6 @@ services:
       IMGPROXY_USE_ETAG: "true"
       IMGPROXY_AUTO_WEBP: ${IMGPROXY_AUTO_WEBP}
       IMGPROXY_MAX_SRC_RESOLUTION: 16.8
-    networks:
-      - shared-net
 
   meta:
     container_name: supabase-meta
@@ -413,9 +399,7 @@ services:
       PG_META_DB_USER: supabase_admin
       PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
       CRYPTO_KEY: ${PG_META_CRYPTO_KEY}  
-    networks:
-      - shared-net
-  
+
   functions:
     container_name: supabase-edge-functions
     image: {{ sb_functions_version }}
@@ -446,8 +430,6 @@ services:
         "--main-service",
         "/home/deno/functions/main"
       ]
-    networks:
-      - shared-net
 
   analytics:
     container_name: supabase-analytics
@@ -495,10 +477,6 @@ services:
       # Uncomment to use Big Query backend for analytics
       # GOOGLE_PROJECT_ID: ${GOOGLE_PROJECT_ID}
       # GOOGLE_PROJECT_NUMBER: ${GOOGLE_PROJECT_NUMBER}
-    networks:
-      - shared-net
-
-
 
   # Comment out everything below this point if you are using an external Postgres database
   db:
@@ -579,8 +557,6 @@ services:
       - /var/log/postgresql:/var/log/postgresql:Z
       # Mount SSL certs
       - /opt/postgres-certs:/etc/postgres/certs:ro
-    networks:
-      - shared-net
 
   vector:
     container_name: supabase-vector
@@ -612,9 +588,6 @@ services:
       ]
     security_opt:
       - "label=disable"
-    networks:
-      - shared-net
-
   # Update the DATABASE_URL if you are using an external Postgres database
 
 
@@ -669,13 +642,7 @@ services:
         "-c",
         "/app/bin/migrate && /app/bin/supavisor eval \"$$(cat /etc/pooler/pooler.exs)\" && /app/bin/server"
       ]
-    networks:
-      - shared-net
 
 volumes:
   db-config:
   deno-cache:
-
-networks:
-  shared-net:
-    external: true
