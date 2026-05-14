@@ -113,6 +113,23 @@ jobs:
                   INTERNAL_AUTH_TOKEN: '${INTERNAL_AUTH_TOKEN}'
             ' ./roles/supabase/templates/docker-compose-supabase.yml.j2
 
+            # Create Docker shared-net for openwebui/supabase-db local connection
+
+            docker network inspect shared-net >/dev/null 2>&1 || docker network create shared-net
+            
+            # add db service in shared network
+            sed -i '/container_name: supabase-db/a\
+                networks:\
+                  - shared-net' docker-compose-supabase.yml.j2
+
+            cat << 'EOF' >> docker-compose-supabase.yml.j2
+
+            networks:
+              shared-net:
+                external: true
+            EOF
+
+
             # Override playbook-supabase.yml
             cat <<EOF > playbook-supabase.yml
             - hosts: localhost
