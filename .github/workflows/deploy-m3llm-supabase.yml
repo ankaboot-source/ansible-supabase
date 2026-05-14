@@ -120,9 +120,9 @@ jobs:
             # add db service in shared network
             sed -i '/container_name: supabase-db/a\
                 networks:\
-                  - shared-net' docker-compose-supabase.yml.j2
+                  - shared-net' ./roles/supabase/templates/docker-compose-supabase.yml.j2
 
-            cat << 'EOF' >> docker-compose-supabase.yml.j2
+            cat << 'EOF' >> ./roles/supabase/templates/docker-compose-supabase.yml.j2
 
             networks:
               shared-net:
