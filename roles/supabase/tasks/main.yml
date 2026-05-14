@@ -1,16 +1,4 @@
 ---
-- name: Check if shared-net Docker network exists
-  command: docker network ls --format '{{ "{{ .Name }}" }}'
-  register: existing_networks
-  changed_when: false
-
-- name: Create shared-net Docker network if missing
-  docker_network:
-    name: shared-net
-    driver: bridge
-    state: present
-  when: ' "shared-net" not in existing_networks.stdout_lines '
-
 - name: Check if Supabase folder exists
   ansible.builtin.stat:
     path: "/home/{{ deploy_user }}/supabase"
