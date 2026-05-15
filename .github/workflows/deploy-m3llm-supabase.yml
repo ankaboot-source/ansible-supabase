@@ -136,6 +136,7 @@ jobs:
             - hosts: localhost
               roles:
                 - supabase
+                - monitor
             EOF
 
             # Deploy supabase
