@@ -40,6 +40,7 @@ services:
 
   grafana:
     image: grafana/grafana:latest
+    container_name: grafana
     environment:
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - SMTP_HOST=${SMTP_HOST}
