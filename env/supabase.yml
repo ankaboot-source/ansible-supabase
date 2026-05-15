@@ -26,7 +26,7 @@ GRAFANA_GITHUB_ROLE: "'Admin'" # refer here for additional infos => https://graf
 GRAFANA_SERVER_ROOT_URL: https://monitor.example.com # your dashboard url # REQUIRED
 GRAFANA_ALERT_HOST: monitor.example.com # REQUIRED
 
-GRAFANA_SMTP_PASSWORD: changeit
+GRAFANA_SMTP_PASSWORD: your_password
 GRAFANA_SMTP_HOST: mail.example.com
 GRAFANA_SMTP_USER: user@example.com
 GRAFANA_SMTP_SENDER: user@example.com
