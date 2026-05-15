@@ -1,6 +1,4 @@
 ---
-networks:
-  net:
 
 volumes:
   grafana_data: {}
@@ -16,8 +14,6 @@ services:
     volumes:
       - ./loki-config.yml:/etc/loki/config.yaml
       - loki_data:/loki
-    networks:
-      - net
     restart: always
 
   prometheus:
@@ -35,8 +31,6 @@ services:
       - 127.0.0.1:9090:9090
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    networks:
-      - net
 
   grafana:
     image: grafana/grafana:latest
@@ -72,8 +66,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - net
     restart: always
 
 
@@ -87,8 +79,6 @@ services:
       - /etc/machine-id:/etc/machine-id
       - /var/log/:/var/log
     command: -config.file=/etc/promtail/config.yaml
-    networks:
-      - net
 
   # Node-exporter for exporting server metrics
   node-exporter:
@@ -123,8 +113,6 @@ services:
       - '-port=7070'
     devices:
       - /dev/kmsg:/dev/kmsg
-    networks:
-      - net
     restart: always
 
   postgres-exporter:
