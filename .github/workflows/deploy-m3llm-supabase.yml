@@ -12,9 +12,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
       - name: Execute Remote Deployment
-        uses: appleboy/ssh-action@master 
+        uses: appleboy/ssh-action@master
         env:
           LITELLM_PROXY_URL: ${{ vars.M3LLM_LITELLM_PROXY_URL }}
           LITELLM_MASTER_KEY: ${{ secrets.M3LLM_LITELLM_MASTER_KEY }}
@@ -130,12 +129,21 @@ jobs:
                 external: true
             EOF
 
+            # Monitor vars injection
+
+            sed -i "s|^GRAFANA_SERVER_ROOT_URL:.*|GRAFANA_SERVER_ROOT_URL: ${{ vars.GRAFANA_SERVER_ROOT_URL }}|" env/supabase.yml
+            sed -i "s|^GRAFANA_ALERT_HOST:.*|GRAFANA_ALERT_HOST: ${{ vars.GRAFANA_ALERT_HOST }}|" env/supabase.yml
+            sed -i "s|^GRAFANA_SMTP_PASSWORD:.*|GRAFANA_SMTP_PASSWORD: ${{ secrets.GRAFANA_SMTP_PASSWORD }}|" env/supabase.yml
+            sed -i "s|^GRAFANA_SMTP_HOST:.*|GRAFANA_SMTP_HOST: ${{ vars.GRAFANA_SMTP_HOST }}|" env/supabase.yml
+            sed -i "s|^GRAFANA_SMTP_USER:.*|GRAFANA_SMTP_USER: ${{ vars.GRAFANA_SMTP_USER }}|" env/supabase.yml
+            sed -i "s|^GRAFANA_SMTP_SENDER:.*|GRAFANA_SMTP_SENDER: ${{ vars.GRAFANA_SMTP_SENDER }}|" env/supabase.yml
 
             # Override playbook-supabase.yml
             cat <<EOF > playbook-supabase.yml
             - hosts: localhost
               roles:
                 - supabase
+                - monitor
             EOF
 
             # Deploy supabase
