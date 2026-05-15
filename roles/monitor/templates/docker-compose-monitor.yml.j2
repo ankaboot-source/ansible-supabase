@@ -78,6 +78,7 @@ services:
       - /run/log/journal/:/run/log/journal/
       - /etc/machine-id:/etc/machine-id
       - /var/log/:/var/log
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
     command: -config.file=/etc/promtail/config.yaml
 
   # Node-exporter for exporting server metrics
