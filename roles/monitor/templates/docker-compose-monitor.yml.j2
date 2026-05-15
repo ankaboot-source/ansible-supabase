@@ -12,7 +12,7 @@ services:
     image: grafana/loki:main-4cae003
     command: "-config.file=/etc/loki/config.yaml"
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     volumes:
       - ./loki-config.yml:/etc/loki/config.yaml
       - loki_data:/loki
@@ -32,7 +32,7 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
     ports:
-      - 9090:9090
+      - 127.0.0.1:9090:9090
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -97,7 +97,7 @@ services:
       - /sys:/host/sys:ro
       - /:/rootfs:ro
     ports:
-      - 9100:9100
+      - 127.0.0.1:9100:9100
     command:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
@@ -115,7 +115,7 @@ services:
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
     ports:
-      - 7070:7070
+      - 127.0.0.1:7070:7070
     command:
       - '-housekeeping_interval=10s'
       - '-docker_only=true'
