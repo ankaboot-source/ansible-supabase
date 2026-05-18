@@ -1,7 +1,10 @@
-
+---
 - hosts: localhost
+  become: true
   roles:
    - ufw
+   - role: luks
+     when: supabase_encryption.enabled
    - docker
    - caddy
    - monitor

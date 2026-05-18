@@ -544,7 +544,7 @@ services:
       # Initialize the database settings with JWT_SECRET and JWT_EXP
       - ./volumes/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:Z
       # Data mount
-      - ./volumes/db/data:/var/lib/postgresql/data:Z
+      - {{ supabase_data_path }}:/var/lib/postgresql/data:Z
       # Changes required for Analytics support
       - ./volumes/db/logs.sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql:Z
       # Changes required for internal supabase data such as _analytics

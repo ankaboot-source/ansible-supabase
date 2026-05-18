@@ -26,6 +26,14 @@
     group: "106"
     mode: "0755"
 
+- name: Ensure Supabase data directory exists
+  ansible.builtin.file:
+    path: "{{ supabase_data_path }}"
+    state: directory
+    owner: "105"
+    group: "106"
+    mode: '0755'
+
 - name: Check if Caddy certificate exists
   ansible.builtin.stat:
     path: "{{ caddy_cert_base_path }}/{{ postgres_domain }}/{{ postgres_domain }}.crt"

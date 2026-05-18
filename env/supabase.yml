@@ -235,3 +235,18 @@ firewall_deny:
 #    cidr: 32
 
 
+##################################
+# At Rest Disk Encryption (LUKS) #
+##################################
+
+supabase_encryption:
+  enabled: false
+
+luks_device: changeit # volume to be encrypted e.g. /dev/disk/by-id/YOU_VOLUME_NAME
+luks_name: encrypted_data
+luks_mount_point: /data
+luks_filesystem: ext4
+luks_key_file: /root/.luks_keyfile
+mount_options: "defaults,noatime,nofail"
+
+supabase_data_path: "{{ luks_mount_point if supabase_encryption.enabled else '/var/lib/supabase/data' }}"
