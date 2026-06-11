@@ -118,15 +118,9 @@ jobs:
                   INTERNAL_AUTH_TOKEN: '${INTERNAL_AUTH_TOKEN}'
             ' ./roles/supabase/templates/docker-compose-supabase.yml.j2
 
-            # Create Docker shared-net for openwebui/supabase-db/caddy/studio/grafana local connection
-
+            # Create Docker shared-net for reverse proxy caddy/openwebui/studio/grafana via local connection
             docker network inspect shared-net >/dev/null 2>&1 || docker network create shared-net
-            
-            # add db service to shared network
-            sed -i '/container_name: supabase-db/a\
-                networks:\
-                  - default\
-                  - shared-net' ./roles/supabase/templates/docker-compose-supabase.yml.j2
+
             # add studio service to shared network
             sed -i '/container_name: supabase-studio/a\
                 networks:\
