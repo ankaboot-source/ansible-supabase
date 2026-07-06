@@ -22,16 +22,16 @@
   ansible.builtin.file:
     path: /var/log/postgresql
     state: directory
-    owner: "105"
-    group: "106"
+    owner: "100"
+    group: "101"
     mode: "0755"
 
 - name: Ensure Supabase data directory exists
   ansible.builtin.file:
     path: "{{ supabase_data_path }}"
     state: directory
-    owner: "105"
-    group: "106"
+    owner: "100"
+    group: "101"
     mode: '0755'
 
 - name: Check if Caddy certificate exists
@@ -43,8 +43,8 @@
   ansible.builtin.file:
     path: "{{ postgres_cert_path }}"
     state: directory
-    owner: "105"
-    group: "106"
+    owner: "100"
+    group: "101"
     mode: "0755"
 
 - name: Copy Postgres SSL certificate
@@ -52,8 +52,8 @@
     src: "{{ caddy_cert_base_path }}/{{ postgres_domain }}/{{ postgres_domain }}.crt"
     dest: "{{ postgres_cert_path }}/server.crt"
     remote_src: yes
-    owner: "105"
-    group: "106"
+    owner: "100"
+    group: "101"
     mode: "0644"
   when: caddy_cert.stat.exists
 
@@ -62,8 +62,8 @@
     src: "{{ caddy_cert_base_path }}/{{ postgres_domain }}/{{ postgres_domain }}.key"
     dest: "{{ postgres_cert_path }}/server.key"
     remote_src: yes
-    owner: "105"
-    group: "106"
+    owner: "100"
+    group: "101"
     mode: "0600"
   when: caddy_cert.stat.exists
 
