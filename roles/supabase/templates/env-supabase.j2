@@ -1,4 +1,17 @@
 ############
+# Docker compose override files to layer on top of docker-compose.yml.
+# Native docker compose COMPOSE_FILE: colon-separated list, base file first.
+# Manage with: ./run.sh config add|remove <name>
+#
+# Examples:
+#   COMPOSE_FILE=docker-compose.yml
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.pg17.yml
+#
+############
+COMPOSE_FILE=docker-compose.yml
+
+
+############
 #
 # YOU MUST CHANGE ALL THE DEFAULT VALUES BELOW BEFORE STARTING
 # THE CONTAINERS FOR THE FIRST TIME!
@@ -7,7 +20,8 @@
 # https://supabase.com/docs/guides/self-hosting/docker#configuring-and-securing-supabase
 #
 # To generate secrets and API keys:
-# sh ./utils/generate-keys.sh
+# 1. sh utils/generate-keys.sh
+# 2. sh utils/add-new-auth-keys.sh
 #
 ############
 
@@ -41,6 +55,11 @@ JWT_JWKS={{ sb_jwt_jwks }}
 DASHBOARD_USERNAME=
 DASHBOARD_PASSWORD=
 SECRET_KEY_BASE={{ secret_key_base }}
+
+# Encryption key used by Realtime for sensitive fields in the `_realtime` schema.
+# (Must be exactly 16 characters; generate with: `openssl rand -hex 8`)
+REALTIME_DB_ENC_KEY=supabaserealtime
+
 VAULT_ENC_KEY={{ vault_enc_key }}
 # Used by Studio to access Postgres via postgres-meta
 PG_META_CRYPTO_KEY={{ pg_meta_crypto_key }}
@@ -242,6 +261,27 @@ AZURE_SECRET={{ azure_secret }}
 
 ## Maximum MFA factors a user can enroll
 # MFA_MAX_ENROLLED_FACTORS=10
+
+## SAML SSO
+
+# You must ALSO uncomment the matching GOTRUE_* lines in docker-compose.yml
+# Documentation: https://supabase.com/docs/guides/self-hosting/self-hosted-saml-sso
+
+# SAML_ENABLED=true
+# SAML_PRIVATE_KEY=<your-base64-encoded-private-key>
+
+# Optional: accept encrypted SAML assertions from IdPs (default: false)
+# SAML_ALLOW_ENCRYPTED_ASSERTIONS=false
+
+# Optional: how long relay state tokens remain valid (default: 2m0s)
+# SAML_RELAY_STATE_VALIDITY_PERIOD=2m0s
+
+# Optional: override the SAML entity ID / ACS base URL
+# Defaults to API_EXTERNAL_URL if not set
+# SAML_EXTERNAL_URL=https://supabase.example.com:8000
+
+# Optional: rate limit on the ACS endpoint (requests per second, default: 15)
+# SAML_RATE_LIMIT_ASSERTION=15
 
 # Google Cloud Project details
 GOOGLE_PROJECT_ID=GOOGLE_PROJECT_ID
