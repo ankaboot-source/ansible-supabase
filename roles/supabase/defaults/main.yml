@@ -1,18 +1,16 @@
 ---
 
-sb_studio_version: supabase/studio:2026.03.16-sha-5528817
+sb_studio_version: supabase/studio:2026.06.03-sha-0bca601
 sb_kong_version: kong/kong:3.9.1
-sb_gotrue_version: supabase/gotrue:v2.186.0
-sb_rest_version: postgrest/postgrest:v14.6
-sb_realtime_version: supabase/realtime:v2.76.5
-sb_storage_version: supabase/storage-api:v1.44.2
+sb_gotrue_version: supabase/gotrue:v2.189.0
+sb_rest_version: postgrest/postgrest:v14.12
+sb_realtime_version: supabase/realtime:v2.102.3
+sb_storage_version: supabase/storage-api:v1.60.4
 sb_imgproxy_version: darthsim/imgproxy:v3.30.1
-sb_meta_version: supabase/postgres-meta:v0.95.2
-sb_functions_version: supabase/edge-runtime:v1.71.2
-sb_analytics_version: supabase/logflare:1.31.2
-sb_db_version: supabase/postgres:15.8.1.085
-sb_vector_version: timberio/vector:0.53.0-alpine
-sb_supavisor_version: supabase/supavisor:2.7.4
+sb_meta_version: supabase/postgres-meta:v0.96.6
+sb_functions_version: supabase/edge-runtime:v1.74.0
+sb_db_version: supabase/postgres:17.6.1.136
+sb_supavisor_version: supabase/supavisor:2.9.5
 caddy_cert_base_path: "/home/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory"
 postgres_cert_path: "/opt/postgres-certs"
 postgres_domain: "your-domain.com"
