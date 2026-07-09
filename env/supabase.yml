@@ -5,6 +5,7 @@
 ##########
 
 deploy_user: changeit # System user ( e.g. my_user if `pwd` shows /home/my_user) # REQUIRED
+environment: changeit # Container name suffix (e.g. prod, qa). Leave as changeit if not needed.
 docker_users:
   - changeit # same as deploy_user #REQUIRED
 docker_restart: yes
