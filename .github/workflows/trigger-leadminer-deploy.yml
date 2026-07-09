@@ -10,7 +10,7 @@ jobs:
   trigger:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger workflow in M3llm repository
+      - name: Trigger workflow in leadminer.io repository
         run: |
           repo_owner="ankaboot-source"
           repo_name="leadminer.io"
