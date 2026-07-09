@@ -2,7 +2,7 @@ name: supabase
 
 services:
   studio:
-    container_name: supabase-studio{% if environment %}-{{ environment }}{% endif %}
+    container_name: supabase-studio{% if deploy_env != 'changeit' %}-{{ deploy_env }}{% endif %}
     image: {{ sb_studio_version }}
     restart: unless-stopped
     healthcheck:
@@ -51,7 +51,7 @@ services:
       - ./volumes/functions:/app/edge-functions:ro,z
 
   kong:
-    container_name: supabase-kong{% if environment %}-{{ environment }}{% endif %}
+    container_name: supabase-kong{% if deploy_env != 'changeit' %}-{{ deploy_env }}{% endif %}
     image: {{ sb_kong_version }}
     restart: unless-stopped
     networks:
@@ -100,7 +100,7 @@ services:
 
 
   auth:
-    container_name: supabase-auth{% if environment %}-{{ environment }}{% endif %}
+    container_name: supabase-auth{% if deploy_env != 'changeit' %}-{{ deploy_env }}{% endif %}
     image: {{ sb_gotrue_version }}
     restart: unless-stopped
     healthcheck:
@@ -254,7 +254,7 @@ services:
       # GOTRUE_HOOK_SEND_EMAIL_SECRETS: "v1,whsec_VGhpcyBpcyBhbiBleGFtcGxlIG9mIGEgc2hvcnRlciBCYXNlNjQgc3RyaW5n"
 
   rest:
-    container_name: supabase-rest{% if environment %}-{{ environment }}{% endif %}
+    container_name: supabase-rest{% if deploy_env != 'changeit' %}-{{ deploy_env }}{% endif %}
     image: {{ sb_rest_version }}
     restart: unless-stopped
     depends_on:
@@ -332,7 +332,7 @@ services:
 
   # To use S3 backed storage: docker compose -f docker-compose.yml -f docker-compose.s3.yml up
   storage:
-    container_name: supabase-storage{% if environment %}-{{ environment }}{% endif %}
+    container_name: supabase-storage{% if deploy_env != 'changeit' %}-{{ deploy_env }}{% endif %}
     image: {{ sb_storage_version }}
     restart: unless-stopped
     depends_on:
@@ -391,7 +391,7 @@ services:
       - ./volumes/storage:/var/lib/storage:z
 
   imgproxy:
-    container_name: supabase-imgproxy{% if environment %}-{{ environment }}{% endif %}
+    container_name: supabase-imgproxy{% if deploy_env != 'changeit' %}-{{ deploy_env }}{% endif %}
     image: {{ sb_imgproxy_version }}
     restart: unless-stopped
     volumes:
@@ -414,7 +414,7 @@ services:
       IMGPROXY_MAX_SRC_RESOLUTION: 16.8
 
   meta:
-    container_name: supabase-meta{% if environment %}-{{ environment }}{% endif %}
+    container_name: supabase-meta{% if deploy_env != 'changeit' %}-{{ deploy_env }}{% endif %}
     image: {{ sb_meta_version }}
     restart: unless-stopped
     depends_on:
@@ -431,7 +431,7 @@ services:
       CRYPTO_KEY: ${PG_META_CRYPTO_KEY}  
 
   functions:
-    container_name: supabase-edge-functions{% if environment %}-{{ environment }}{% endif %}
+    container_name: supabase-edge-functions{% if deploy_env != 'changeit' %}-{{ deploy_env }}{% endif %}
     image: {{ sb_functions_version }}
     restart: unless-stopped
     volumes:
@@ -470,7 +470,7 @@ services:
 
   # Comment out everything below this point if you are using an external Postgres database
   db:
-    container_name: supabase-db{% if environment %}-{{ environment }}{% endif %}
+    container_name: supabase-db{% if deploy_env != 'changeit' %}-{{ deploy_env }}{% endif %}
     image: {{ sb_db_version }}
     healthcheck:
       test: 
@@ -552,7 +552,7 @@ services:
 
 
   supavisor:
-    container_name: supabase-pooler{% if environment %}-{{ environment }}{% endif %}
+    container_name: supabase-pooler{% if deploy_env != 'changeit' %}-{{ deploy_env }}{% endif %}
     image: {{ sb_supavisor_version }}
     restart: unless-stopped
     ports:
