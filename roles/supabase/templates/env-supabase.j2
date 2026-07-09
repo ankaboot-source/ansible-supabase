@@ -153,6 +153,9 @@ MAILER_TEMPLATES_CONFIRMATION={{ api_external_url }}/storage/v1/object/public/te
 MAILER_TEMPLATES_EMAIL_CHANGE={{ api_external_url }}/storage/v1/object/public/templates/email_change.html
 MAILER_TEMPLATES_INVITE={{ api_external_url }}/storage/v1/object/public/templates/email_invite.html
 
+# Magic link expiry time # 300sec=5 minutes
+MAILER_OTP_EXP=300 
+
 ## Password Check
 PASSWORD_MIN_LENGTH=12
 PASSWORD_REQUIRED_CHARACTERS=abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!"#$%&'()*+,-./;<=>?@[\]^_`{|}~
