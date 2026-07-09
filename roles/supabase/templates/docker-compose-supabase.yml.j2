@@ -2,7 +2,7 @@ name: supabase
 
 services:
   studio:
-    container_name: supabase-studio
+    container_name: supabase-studio{% if environment %}-{{ environment }}{% endif %}
     image: {{ sb_studio_version }}
     restart: unless-stopped
     healthcheck:
@@ -51,7 +51,7 @@ services:
       - ./volumes/functions:/app/edge-functions:ro,z
 
   kong:
-    container_name: supabase-kong
+    container_name: supabase-kong{% if environment %}-{{ environment }}{% endif %}
     image: {{ sb_kong_version }}
     restart: unless-stopped
     networks:
@@ -100,7 +100,7 @@ services:
 
 
   auth:
-    container_name: supabase-auth
+    container_name: supabase-auth{% if environment %}-{{ environment }}{% endif %}
     image: {{ sb_gotrue_version }}
     restart: unless-stopped
     healthcheck:
@@ -161,6 +161,7 @@ services:
       GOTRUE_SMTP_USER: ${SMTP_USER}
       GOTRUE_SMTP_PASS: ${SMTP_PASS}
       GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME}
+      GOTRUE_MAILER_OTP_EXP: ${MAILER_OTP_EXP}
       GOTRUE_MAILER_URLPATHS_INVITE: ${MAILER_URLPATHS_INVITE}
       GOTRUE_MAILER_URLPATHS_CONFIRMATION: ${MAILER_URLPATHS_CONFIRMATION}
       GOTRUE_MAILER_URLPATHS_RECOVERY: ${MAILER_URLPATHS_RECOVERY}
@@ -197,6 +198,8 @@ services:
       GOTRUE_EXTERNAL_AZURE_CLIENT_ID: ${AZURE_CLIENT_ID}
       GOTRUE_EXTERNAL_AZURE_SECRET: ${AZURE_SECRET}
       GOTRUE_EXTERNAL_AZURE_REDIRECT_URI: ${API_EXTERNAL_URL}/auth/v1/callback
+
+      # GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: true
 
       # Uncomment to configure SMS delivery (phone auth and phone MFA).
       # GOTRUE_SMS_PROVIDER: ${SMS_PROVIDER}
@@ -251,7 +254,7 @@ services:
       # GOTRUE_HOOK_SEND_EMAIL_SECRETS: "v1,whsec_VGhpcyBpcyBhbiBleGFtcGxlIG9mIGEgc2hvcnRlciBCYXNlNjQgc3RyaW5n"
 
   rest:
-    container_name: supabase-rest
+    container_name: supabase-rest{% if environment %}-{{ environment }}{% endif %}
     image: {{ sb_rest_version }}
     restart: unless-stopped
     depends_on:
@@ -329,7 +332,7 @@ services:
 
   # To use S3 backed storage: docker compose -f docker-compose.yml -f docker-compose.s3.yml up
   storage:
-    container_name: supabase-storage
+    container_name: supabase-storage{% if environment %}-{{ environment }}{% endif %}
     image: {{ sb_storage_version }}
     restart: unless-stopped
     depends_on:
@@ -388,7 +391,7 @@ services:
       - ./volumes/storage:/var/lib/storage:z
 
   imgproxy:
-    container_name: supabase-imgproxy
+    container_name: supabase-imgproxy{% if environment %}-{{ environment }}{% endif %}
     image: {{ sb_imgproxy_version }}
     restart: unless-stopped
     volumes:
@@ -411,7 +414,7 @@ services:
       IMGPROXY_MAX_SRC_RESOLUTION: 16.8
 
   meta:
-    container_name: supabase-meta
+    container_name: supabase-meta{% if environment %}-{{ environment }}{% endif %}
     image: {{ sb_meta_version }}
     restart: unless-stopped
     depends_on:
@@ -428,7 +431,7 @@ services:
       CRYPTO_KEY: ${PG_META_CRYPTO_KEY}  
 
   functions:
-    container_name: supabase-edge-functions
+    container_name: supabase-edge-functions{% if environment %}-{{ environment }}{% endif %}
     image: {{ sb_functions_version }}
     restart: unless-stopped
     volumes:
@@ -467,7 +470,7 @@ services:
 
   # Comment out everything below this point if you are using an external Postgres database
   db:
-    container_name: supabase-db
+    container_name: supabase-db{% if environment %}-{{ environment }}{% endif %}
     image: {{ sb_db_version }}
     healthcheck:
       test: 
@@ -549,7 +552,7 @@ services:
 
 
   supavisor:
-    container_name: supabase-pooler
+    container_name: supabase-pooler{% if environment %}-{{ environment }}{% endif %}
     image: {{ sb_supavisor_version }}
     restart: unless-stopped
     ports:
