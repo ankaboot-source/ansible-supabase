@@ -23,9 +23,10 @@ GRAFANA_AUTH_ANONYMOUS_ORG_ROLE: Admin
 # Basic Auth
 GRAFANA_AUTH_BASIC_ENABLED: false # set it to true to enable username/password login
 GRAFANA_ADMIN_USER: admin # default admin username for basic auth
-GRAFANA_ADMIN_PASSWORD: changeit # default admin password for basic auth - change this!
+GRAFANA_ADMIN_PASSWORD: your_admin_password # default admin password for basic auth - change this!
 
 # GitHub Oauth
+GRAFANA_GITHUB_AUTH_ENABLED: false
 GRAFANA_GITHUB_CLIENT_ID: your_client_id # REQUIRED if GRAFANA_AUTH_ANONYMOUS_ENABLED is false
 GRAFANA_GITHUB_CLIENT_SECRET: your_client_secret # REQUIRED if GRAFANA_AUTH_ANONYMOUS_ENABLED is false
 GRAFANA_GITHUB_ALLOWED_ORG: ["org1"] # e.g. ["org1", "org2"]
