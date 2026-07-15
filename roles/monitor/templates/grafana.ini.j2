@@ -9,29 +9,35 @@
 # instance name, defaults to HOSTNAME environment variable value or hostname if HOSTNAME var is empty
 ;instance_name = ${HOSTNAME}
 
-# force migration will run migrations that might cause dataloss
-;force_migration = false
+;target =
 
-#################################### Paths ####################################
+#################################### Paths ###############################
 [paths]
 # Path to where grafana can store temp files, sessions, and the sqlite3 db (if that is used)
-;data = /var/lib/grafana
+;data = data
 
 # Temporary files in `data` directory older than given duration will be removed
 ;temp_data_lifetime = 24h
 
 # Directory where grafana can store logs
-;logs = /var/log/grafana
+;logs = data/log
 
 # Directory where grafana will automatically scan and look for plugins
-;plugins = /var/lib/grafana/plugins
+;plugins = data/plugins
 
 # folder that contains provisioning config files that grafana will apply on startup and while running.
 ;provisioning = conf/provisioning
 
-#################################### Server ####################################
+# Directories that are permitted to contain local repositories.
+# This is a list. Each entry is delimited by a pipe (|). No leading or trailing spaces are supported.
+# These do not need to be absolute paths, in which case they'll be relative to the path where you are running Grafana.
+# Empty entries will return an error, unless the string is just a single pipe.
+# Example: permitted_provisioning_paths = /tmp|/etc/grafana/repositories|conf/provisioning
+;permitted_provisioning_paths = devenv/dev-dashboards|conf/provisioning
+
+#################################### Server ##############################
 [server]
-# Protocol (http, https, h2, socket)
+# Protocol (http, https, h2, socket, socket_h2)
 ;protocol = http
 
 # Minimum TLS version allowed. By default, this value is empty. Accepted values are: TLS1.2, TLS1.3. If nothing is set TLS1.2 would be taken
@@ -50,8 +56,7 @@
 # Prevents DNS rebinding attacks
 ;enforce_domain = false
 
-# The full public facing url you use in browser, used for redirects and emails
-# If you use reverse proxy and sub path specify full url (with sub path)
+# The full public facing url
 ;root_url = %(protocol)s://%(domain)s:%(http_port)s/
 
 # Serve Grafana from subpath specified in `root_url` setting. By default it is set to `false` for compatibility reasons.
@@ -64,34 +69,35 @@
 ;static_root_path = public
 
 # enable gzip
-;enable_gzip = false
+;enable_gzip = true
 
 # https certs & key file
 ;cert_file =
 ;cert_key =
-
-# optional password to be used to decrypt key file
 ;cert_pass =
 
 # Certificates file watch interval
 ;certs_watch_interval =
 
 # Unix socket gid
-# Changing the gid of a file without privileges requires that the target group is in the group of the process and that the process is the file owner
+# To change a file's GID without elevated privileges, the user must be the file owner and be a member to the target group.
 # It is recommended to set the gid as http server user gid
 # Not set when the value is -1
-;socket_gid =
+;socket_gid = -1
 
 # Unix socket mode
-;socket_mode =
+;socket_mode = 0660
 
 # Unix socket path
-;socket =
+;socket = /tmp/grafana.sock
+
+# If set to `true` and the primary `protocol` is `http`, `https`, or `h2`, Grafana will additionally serve on the Unix domain socket configured via `socket`. Defaults to `false`.
+;serve_on_socket = false
 
 # CDN Url
 ;cdn_url =
 
-# Sets the maximum time using a duration format (5s/5m/5ms) before timing out read of an incoming request and closing idle connections.
+# Sets the maximum time in minutes before timing out read of an incoming request and closing idle connections.
 # `0` means there is no timeout for reading the request.
 ;read_timeout = 0
 
@@ -99,37 +105,117 @@
 [server.custom_response_headers]
 #exampleHeader1 = exampleValue1
 #exampleHeader2 = exampleValue2
+
 [environment]
-
 # Sets whether the local file system is available for Grafana to use. Default is true for backward compatibility.
-
 ;local_file_system_available = true
 
-
-
 #################################### GRPC Server #########################
-
-;[grpc_server]
+[grpc_server]
 ;network = "tcp"
 ;address = "127.0.0.1:10000"
 ;use_tls = false
 ;cert_file =
 ;cert_key =
-;max_recv_msg_size =
-;max_send_msg_size =
 # this will log the request and response for each unary gRPC call
 ;enable_logging = false
+
+# Maximum size of a message that can be received in bytes. If not set, uses the gRPC default (4MiB).
+;max_recv_msg_size =
+
+# Maximum size of a message that can be sent in bytes. If not set, uses the gRPC default (unlimited).
+;max_send_msg_size =
+
+# Maximum amount of time a connection may exist before it will be closed
 ;max_connection_age =
 ;max_connection_age_grace =
 ;max_connection_idle =
+
+# Frequency of server-to-client pings to check if a connection is still active
 ;keepalive_time =
 ;keepalive_timeout =
 ;keepalive_min_time =
 
-#################################### Database ####################################
+#################################### NATS #####################################
+[nats]
+# Enable the Core NATS message bus. Stateless signalling only; disabled by default.
+;enabled = false
+
+# Bus topology: "embedded" runs an in-process Core NATS server; "external" connects to client_urls only.
+;mode = embedded
+
+# Comma-separated NATS client connection URLs (for pub/sub). In embedded mode the local server's
+# URL is prepended automatically, so this only needs external brokers/peers to also connect to.
+;client_urls =
+
+# Embedded server listener settings (conventional NATS ports).
+;listen_address = 127.0.0.1
+;client_port = 4222
+;cluster_port = 6222
+
+# Advertise address for peer discovery. If empty, listen_address is used. The default listen_address
+# (127.0.0.1) only clusters on a single host: peers advertise a loopback route that resolves to
+# themselves. For multi-host HA, set listen_address to a routable address, or bind 0.0.0.0 and set
+# advertise_address to a routable address (0.0.0.0 is coerced to loopback when advertised).
+;advertise_address =
+
+# Embedded cluster peer discovery. discovery_enabled turns on KV-backed peer discovery so replicas
+# self-assemble into a mesh; disable it to run a single standalone node with no clustering.
+# discovery_interval is how often a node refreshes its heartbeat and reconciles routes; discovery_ttl
+# is how long a peer is trusted after its last heartbeat before eviction.
+;discovery_enabled = true
+;discovery_interval = 5s
+;discovery_ttl = 30s
+
+# For testing only: run a NATS-backed notifier alongside the storage backend's primary notifier.
+# It records comparison metrics only and never feeds the watch pipeline, so it does not change watch behavior.
+;notifier_shadow = false
+
+# Feed the watch pipeline directly from the NATS bus instead of polling the database.
+# Delivery is at-most-once (stateless Core NATS); a disabled or unavailable bus degrades to polling.
+;notifier = false
+
+# Transport security for client connections.
+;tls_enabled = false
+;tls_ca_cert_path =
+;tls_cert_path =
+;tls_key_path =
+;tls_server_name =
+# For testing only; never enable in production.
+;tls_insecure_skip_verify = false
+
+# Connection identity. auth_mode selects the mechanism explicitly; the fields it reads depend on the value:
+#   none           - connect without credentials (default).
+#   token          - present the static token below.
+#   credentials    - present a NATS .creds file (JWT + NKEY). Per-role files let each role use a
+#                    least-privilege identity; an empty per-role value falls back to credentials_file.
+#   token_exchange - mint a short-lived authlib access token per (re)connect and present it as the connect
+#                    token, so an external auth-callout service can verify it and grant least-privilege
+#                    permissions from its claims. Set token_exchange_audiences (comma-separated); the exchange
+#                    endpoint and bootstrap token come from [grpc_client_authentication] (token_exchange_url,
+#                    token, token_namespace).
+;auth_mode = none
+;token =
+;credentials_file =
+;publisher_credentials_file =
+;subscriber_credentials_file =
+;token_exchange_audiences =
+
+#################################### Grafana API server (Kubernetes-style APIs) #########################
+[grafana-apiserver]
+# Comma-separated list of group/version entries. For each entry, discovery uses that version as the
+# preferred version for the group when that version is enabled (via default enablement or runtime_config).
+# Example: dashboard.grafana.app/v1, playlists.grafana.app/v1alpha1
+# preferred_api_version =
+
+# Interval between HTTP/2 keepalive pings on the resource-store gRPC client.
+# Disabled by default (0).
+# grpc_client_keepalive_time = 0
+
+#################################### Database ############################
 [database]
 # You can configure the database connection by specifying type, host, name, user and password
-# as separate properties or as on string using the url properties.
+# as separate properties or as on string using the url property.
 
 # Either "mysql", "postgres" or "sqlite3", it's your choice
 ;type = sqlite3
@@ -138,7 +224,6 @@
 ;user = root
 # If the password contains # or ; you have to wrap it with triple quotes. Ex """#password;"""
 ;password =
-
 # Use either URL or the previous fields to configure the database
 # Example: mysql://user:secret@host:port/database
 ;url =
@@ -166,7 +251,6 @@
 # For "mysql", use either "true", "false", or "skip-verify".
 ;ssl_mode = disable
 
-
 # For "postgres", use either "1" to enable or "0" to disable SNI
 ;ssl_sni =
 
@@ -184,34 +268,40 @@
 # For "sqlite3" only, path relative to data_path setting
 ;path = grafana.db
 
-# For "sqlite3" only. cache mode setting used for connecting to the database. (private, shared)
+# For "sqlite3" only. cache mode setting used for connecting to the database
 ;cache_mode = private
 
 # For "sqlite3" only. Enable/disable Write-Ahead Logging, https://sqlite.org/wal.html. Default is false.
 ;wal = false
 
-# For "mysql" and "postgres" only. Lock the database for the migrations, default is true.
+# For "mysql" and "postgres". Lock the database for the migrations, default is true.
 ;migration_locking = true
 
-# For "mysql" and "postgres" only. How many seconds to wait before failing to lock the database for the migrations, default is 0.
+# For "mysql" and "postgres" only if migrationLocking is set. How many seconds to wait before failing to lock the database for the migrations, default is 0.
 ;locking_attempt_timeout_sec = 0
 
 # For "sqlite" only. How many times to retry query in case of database is locked failures. Default is 0 (disabled).
 ;query_retries = 0
 
-# For "sqlite" only. How many times to retry transaction in case of database is locked failures. Default is 5.
-;transaction_retries = 5
+# For "sqlite" only. How many times to retry transaction in case of database is locked failures. Default is 10.
+;transaction_retries = 10
 
 # Set to true to add metrics and tracing for database queries.
 ;instrument_queries = false
+
+# For MySQL: set to false to disable FORCE INDEX (IDX_dashboard_title) in dashboard search queries.
+# Disabling can improve performance when filters are selective (e.g. by uid); leave true for legacy behavior.
+;force_dashboard_title_index = true
 
 # Set to true to delete auto-generated primary keys during migrations.
 # This is useful when databases have auto-generated primary keys enabled.
 ;delete_auto_gen_ids = false
 
-# Set to true to skip dashboard UID migrations on startup.
-# Improves startup performance for instances with large numbers of annotations who do not plan to downgrade Grafana.
-;skip_dashboard_uid_migration_on_startup = false
+# Set to true to skip all database migrations on startup. Should be used in conjunction with "ensure_default_org_and_user".
+;skip_migrations = false
+
+# Set to false to skip ensuring the default organization and user on startup.
+;ensure_default_org_and_user = true
 
 #################################### Cache server #############################
 [remote_cache]
@@ -220,12 +310,12 @@
 
 # cache connectionstring options
 # database: will use Grafana primary database.
-# redis: config like redis server e.g. `addr=127.0.0.1:6379,pool_size=100,db=0,username=grafana,password=grafanaRocks,ssl=false`. Only addr is required. ssl may be 'true', 'false', or 'insecure'.
+# redis: config like redis server e.g. `network=tcp,addr=127.0.0.1:6379,pool_size=100,db=0,username=grafana,password=grafanaRocks,ssl=false`. Only addr is required. network may be 'tcp' or 'unix'. ssl may be 'true', 'false', or 'insecure'.
 # memcache: 127.0.0.1:11211
 ;connstr =
 
 # prefix prepended to all the keys in the remote cache
-; prefix =
+;prefix =
 
 # This enables encryption of values stored in the remote cache
 ;encryption =
@@ -243,7 +333,7 @@
 # How long the data proxy waits to establish a TCP connection before timing out, default is 10 seconds.
 ;dialTimeout = 10
 
-# How many seconds the data proxy waits before sending a keepalive probe request.
+# How many seconds the data proxy waits before sending a keepalive request.
 ;keep_alive_seconds = 30
 
 # How many seconds the data proxy waits for a successful TLS Handshake before timing out.
@@ -266,7 +356,7 @@
 # How many seconds the data proxy keeps an idle connection open before timing out.
 ;idle_conn_timeout_seconds = 90
 
-# If enabled and user is not anonymous, data proxy will add X-Grafana-User header with username into the request, default is false.
+# If enabled and user is not anonymous, data proxy will add X-Grafana-User header with username into the request.
 ;send_user_header = false
 
 # Limit the amount of bytes that will be read/accepted from responses of outgoing HTTP requests.
@@ -275,10 +365,14 @@
 # Limits the number of rows that Grafana will process from SQL data sources.
 ;row_limit = 1000000
 
-# Sets a custom value for the `User-Agent` header for outgoing data proxy requests. If empty, the default value is `Grafana/<BuildVersion>` (for example `Grafana/9.0.0`).
+# Sets a custom value for the `User-Agent` header for outgoing data proxy requests. If empty, the default value is `Grafana/<BuildVersion>` (for example `Grafana/13.0.0`).
 ;user_agent =
 
-#################################### Analytics ####################################
+# If enabled, data proxy will preserve the client's original `User-Agent` by appending it to the proxy `User-Agent`
+# (e.g. `Grafana/13.0.0 my-client/1.4`). Useful for tracking the originating client through the proxy. Default is false.
+;forward_user_agent = false
+
+#################################### Analytics ###########################
 [analytics]
 # Server reporting, sends usage counters to stats.grafana.org every 24 hours.
 # No ip addresses are being tracked, only simple counters to track
@@ -324,6 +418,9 @@
 # Rudderstack SDK url, optional, only valid if rudderstack_write_key and rudderstack_data_plane_url is also set
 ;rudderstack_sdk_url =
 
+# Rudderstack v3 SDK, optional, defaults to false. If set, Rudderstack v3 SDK will be used instead of v1
+;rudderstack_v3_sdk_url =
+
 # Rudderstack Config url, optional, used by Rudderstack SDK to fetch source config
 ;rudderstack_config_url =
 
@@ -341,27 +438,33 @@
 
 # Optional, defaults to true. Configure automatic route tracking for single page applications in Application Insights.
 # See https://learn.microsoft.com/en-us/azure/azure-monitor/app/application-insights-faq#is-there-a-way-to-see-fewer-events-per-transaction-when-i-use-the-application-insights-javascript-sdk
-;application_insights_auto_route_tracking =
+;application_insights_auto_route_tracking = true
+
+# PostHog analytics token, only enabled if you specify a token here
+;posthog_token =
+
+# PostHog host URL, defaults to https://us.i.posthog.com if not set
+;posthog_host =
 
 # Controls if the UI contains any links to user feedback forms
 ;feedback_links_enabled = true
 
 # Static context that is being added to analytics events
-;reporting_static_context = grafanaInstance=12, os=linux
+;reporting_static_context =
 
 # Logs interaction events to the browser javascript console, intended for development only
 ;browser_console_reporter = false
 
-#################################### Security ####################################
+#################################### Security ############################
 [security]
 # disable creation of admin user on first start of grafana
 ;disable_initial_admin_creation = false
 
 # default admin user, created on startup
-;admin_user = admin
+admin_user = ${GRAFANA_ADMIN_USER}
 
-# default admin password, can be changed before first start of grafana,  or in profile settings
-;admin_password = admin
+# default admin password, can be changed before first start of grafana, or in profile settings
+admin_password = ${GRAFANA_ADMIN_PASSWORD}
 
 # default admin email, created on startup
 ;admin_email = admin@localhost
@@ -378,6 +481,9 @@
 # disable gravatar profile images
 ;disable_gravatar = false
 
+# The base URL to use for fetching Gravatar profile images.
+;gravatar_url = https://secure.gravatar.com/avatar
+
 # data source proxy whitelist (ip_or_domain:port separated by spaces)
 ;data_source_proxy_whitelist =
 
@@ -391,7 +497,7 @@
 ;disable_username_login_protection = false
 
 # disable protection against brute force login attempts by IP address
-; disable_ip_address_login_protection = true
+;disable_ip_address_login_protection = true
 
 # set to true if you host Grafana behind HTTPS. default is false.
 ;cookie_secure = false
@@ -431,7 +537,7 @@
 # Set Content Security Policy template used when adding the Content-Security-Policy header to your requests.
 # $NONCE in the template includes a random nonce.
 # $ROOT_PATH is server.root_url without the protocol.
-;content_security_policy_template = """script-src 'self' 'unsafe-eval' 'unsafe-inline' 'strict-dynamic' $NONCE;object-src 'none';font-src 'self';style-src 'self' 'unsafe-inline' blob:;img-src * data:;base-uri 'self';connect-src 'self' grafana.com ws://$ROOT_PATH wss://$ROOT_PATH;manifest-src 'self';media-src 'none';form-action 'self';"""
+;content_security_policy_template = """script-src 'self' 'unsafe-eval' 'unsafe-inline' 'strict-dynamic' $NONCE;object-src 'none';font-src 'self';style-src 'self' 'unsafe-inline' blob:;img-src * data:;base-uri 'self';connect-src 'self' grafana.com ws://$ROOT_PATH wss://$ROOT_PATH;manifest-src 'self';media-src 'none';form-action 'self' $FORM_ACTION_ADDITIONAL_HOSTS;"""
 
 # Enable adding the Content-Security-Policy-Report-Only header to your requests.
 # Allows you to monitor the effects of a policy without enforcing it.
@@ -440,13 +546,12 @@
 # Set Content Security Policy Report Only template used when adding the Content-Security-Policy-Report-Only header to your requests.
 # $NONCE in the template includes a random nonce.
 # $ROOT_PATH is server.root_url without the protocol.
-;content_security_policy_report_only_template = """script-src 'self' 'unsafe-eval' 'unsafe-inline' 'strict-dynamic' $NONCE;object-src 'none';font-src 'self';style-src 'self' 'unsafe-inline' blob:;img-src * data:;base-uri 'self';connect-src 'self' grafana.com ws://$ROOT_PATH wss://$ROOT_PATH;manifest-src 'self';media-src 'none';form-action 'self';"""
+;content_security_policy_report_only_template = """script-src 'self' 'unsafe-eval' 'unsafe-inline' 'strict-dynamic' $NONCE;object-src 'none';font-src 'self';style-src 'self' 'unsafe-inline' blob:;img-src * data:;base-uri 'self';connect-src 'self' grafana.com ws://$ROOT_PATH wss://$ROOT_PATH;manifest-src 'self';media-src 'none';form-action 'self' $FORM_ACTION_ADDITIONAL_HOSTS;"""
 
-# List of additional allowed URLs to pass by the CSRF check, separated by spaces. Suggested when authentication comes from an IdP.
-;csrf_trusted_origins = example.com
-
-# List of allowed headers to be set by the user, separated by spaces. Suggested to use for if authentication lives behind reverse proxies.
-;csrf_additional_headers =
+# Space-separated list of additional hostnames to allow in the CSP form-action directive.
+# $FORM_ACTION_ADDITIONAL_HOSTS in the CSP template is replaced with this value.
+# 'self' should be included directly in the CSP template; this setting adds extra hosts.
+;form_action_additional_hosts =
 
 # The CSRF check will be executed even if the request has no login cookie.
 ;csrf_always_check = false
@@ -476,11 +581,17 @@
 ;external_snapshot_url = https://snapshots.raintank.io
 ;external_snapshot_name = Publish to snapshots.raintank.io
 
+# Service account token used to authenticate inter-instance snapshot communication.
+# When set, this token is sent as a Bearer token in the Authorization header for
+# external snapshot create and delete requests.
+;external_snapshot_token =
+
 # Set to true to enable this Grafana instance act as an external snapshot server and allow unauthenticated requests for
 # creating and deleting snapshots.
 ;public_mode = false
 
-#################################### Dashboards  ##################
+#################################### Dashboards ##################
+
 [dashboards]
 # Number dashboard versions to keep (per dashboard). Default: 20, Minimum: 1
 ;versions_to_keep = 20
@@ -490,8 +601,22 @@
 ;min_refresh_interval = 5s
 
 # Path to the default home dashboard. If this value is empty, then Grafana uses StaticRootPath + "dashboards/home.json"
-;default_home_dashboard_path = /etc/grafana/home.json
+;default_home_dashboard_path =
 
+# Dashboards UIDs to report performance metrics for. * can be used to report metrics for all dashboards
+;dashboard_performance_metrics =
+
+# Maximum number of series that will be showed in a single panel. Users can opt in to rendering all series. Default is 0 (unlimited).
+;panel_series_limit =
+
+################################### Dashboard cleanup ####################
+[dashboard_cleanup]
+# How often to run the job that cleans up resources associated with dashboards deleted through /apis. Default: 30s, Minimum: 10s.
+# The interval string must include a unit suffix (ms, s, m, h), e.g. 30s or 1m.
+;interval = 30s
+
+# Number of deleted dashboards to process in each batch during cleanup. Default: 10, Minimum: 5, Maximum: 200.
+;batch_size = 10
 
 ################################### Data sources #########################
 [datasources]
@@ -528,10 +653,10 @@
 #################################### Users ###############################
 [users]
 # disable user signup / registration
-;allow_sign_up = true
+;allow_sign_up = false
 
 # Allow non admin users to create organizations
-;allow_org_create = true
+;allow_org_create = false
 
 # Set to true to automatically assign new users to the default organization (id 1)
 ;auto_assign_org = true
@@ -549,10 +674,10 @@
 ;login_default_org_id =
 
 # Background text for the user field on the login page
-;login_hint = email or username
-;password_hint = password
+;login_hint =
+;password_hint =
 
-# Default UI theme ("dark", "light" or "system")
+# Default UI theme ("dark" or "light" or "system")
 ;default_theme = dark
 
 # Default UI language (supported IETF language tag, such as en-US)
@@ -561,7 +686,7 @@
 # Path to a custom home page. Users are only redirected to this if the default home dashboard is used. It should match a frontend route and contain a leading slash.
 ;home_page =
 
-# External user management, these options affect the organization users view
+# External user management
 ;external_manage_link_url =
 ;external_manage_link_name =
 ;external_manage_info =
@@ -576,11 +701,11 @@
 # The duration in time a verification email, used to update the email address of a user, remains valid before expiring. This setting should be expressed as a duration. Examples: 6h (hours), 2d (days), 1w (week). Default is 1h (1 hour).
 ;verification_email_max_lifetime_duration = 1h
 
-# Frequency of updating a user's last seen time. The minimum supported duration is 5m (5 minutes). The maximum supported duration is 1h (1 hour).
+# Frequency of updating a user's last seen time. The minimum supported duration is 5m (5 minutes). The maximum supported duration is 1h (1 hour)
 ;last_seen_update_interval = 15m
 
-# Enter a comma-separated list of users login to hide them in the Grafana UI. These users are shown to Grafana admins and themselves.
-; hidden_users =
+# Enter a comma-separated list of usernames to hide them in the Grafana UI. These users are shown to Grafana admins and to themselves.
+;hidden_users =
 
 [secretscan]
 # Enable secretscan feature
@@ -599,18 +724,17 @@
 ;revoke = true
 
 [service_accounts]
-# Service account maximum expiration date in days.
 # When set, Grafana will not allow the creation of tokens with expiry greater than this setting.
-; token_expiration_day_limit =
+;token_expiration_day_limit =
 
 [auth]
 # Login cookie name
 ;login_cookie_name = grafana_session
 
-# Disable usage of Grafana build-in login solution.
+# Disable usage of Grafana's built-in login solution.
 disable_login = false
 
-# The maximum lifetime (duration) an authenticated user can be inactive before being required to login at next visit. Default is 7 days (7d). This setting should be expressed as a duration, e.g. 5m (minutes), 6h (hours), 10d (days), 2w (weeks), 1M (month). The lifetime resets at each successful token rotation.
+# The maximum lifetime (duration) an authenticated user can be inactive before being required to login at next visit. Default is 7 days (7d). This setting should be expressed as a duration, e.g. 5m (minutes), 6h (hours), 10d (days), 2w (weeks), 1M (month). The lifetime resets at each successful token rotation (token_rotation_interval_minutes).
 ;login_maximum_inactive_lifetime_duration =
 
 # The maximum lifetime (duration) an authenticated user can be logged in since login time before being required to login. Default is 30 days (30d). This setting should be expressed as a duration, e.g. 5m (minutes), 6h (hours), 10d (days), 2w (weeks), 1M (month).
@@ -619,10 +743,10 @@ disable_login = false
 # How often should auth tokens be rotated for authenticated users when being active. The default is each 10 minutes.
 ;token_rotation_interval_minutes = 10
 
-# Set to true to disable (hide) the login form, useful if you use OAuth, defaults to false
-disable_login_form = true
+# Set to true to disable (hide) the login form, useful if you use OAuth
+disable_login_form = false
 
-# Set to true to disable the sign out link in the side menu. Useful if you use auth.proxy or auth.jwt, defaults to false
+# Set to true to disable the sign out link in the side menu. Useful if you use auth.proxy or auth.jwt.
 disable_signout_menu = false
 
 # URL to redirect the user to after sign out
@@ -636,23 +760,26 @@ disable_signout_menu = false
 # OAuth state max age cookie duration in seconds. Defaults to 600 seconds.
 ;oauth_state_cookie_max_age = 600
 
+# Sets a custom oAuth error message. This is useful if you need to point the users to a specific location for support.
+;oauth_login_error_message = oauth.login.error
+
 # Minimum wait time in milliseconds for the server lock retry mechanism.
 # The server lock retry mechanism is used to prevent multiple Grafana instances from
 # simultaneously refreshing OAuth tokens. This mechanism waits at least this amount
 # of time before retrying to acquire the server lock. There are 5 retries in total.
 # The wait time between retries is calculated as random(n, n + 500)
-; oauth_refresh_token_server_lock_min_wait_ms = 1000
+;oauth_refresh_token_server_lock_min_wait_ms = 1000
 
 # limit of api_key seconds to live before expiration
 ;api_key_max_seconds_to_live = -1
 
-# Set to true to enable SigV4 authentication option for HTTP-based datasources.
+# Set to true to enable SigV4 authentication option for HTTP-based datasources
 ;sigv4_auth_enabled = false
 
 # Set to true to enable verbose logging of SigV4 request signing
 ;sigv4_verbose_logging = false
 
-# Set to true to enable Azure authentication option for HTTP-based datasources.
+# Set to true to enable Azure authentication option for HTTP-based datasources
 ;azure_auth_enabled = false
 
 # Use email lookup in addition to the unique ID provided by the IdP
@@ -671,7 +798,18 @@ disable_signout_menu = false
 
 # Enables the use of managed service accounts for plugin authentication
 # This feature currently **only supports single-organization deployments**
-; managed_service_accounts_enabled = false
+;managed_service_accounts_enabled = false
+
+#################################### SSO Settings ###########################
+[sso_settings]
+# interval for reloading the SSO Settings from the database
+# useful in high availability setups running multiple Grafana instances
+# set to 0 to disable this feature
+;reload_interval = 1m
+
+# List of providers that can be configured through the SSO Settings API and UI.
+;configurable_providers = github gitlab google generic_oauth azuread okta
+
 #################################### Anonymous Auth ######################
 [auth.anonymous]
 # enable anonymous access
@@ -717,8 +855,7 @@ role_attribute_path = ${GRAFANA_GITHUB_ROLE}
 ;tls_client_ca =
 # GitHub OAuth apps does not provide refresh tokens and the access tokens never expires.
 ;use_refresh_token = false
-
-#################################### GitLab Auth #########################
+;token_exchange_timeout = 15
 [auth.gitlab]
 ;name = GitLab
 ;icon = gitlab
@@ -726,7 +863,7 @@ role_attribute_path = ${GRAFANA_GITHUB_ROLE}
 ;allow_sign_up = true
 ;auto_login = false
 ;client_id = some_id
-;client_secret = some_secret
+;client_secret =
 ;scopes = openid email profile
 ;auth_url = https://gitlab.com/oauth/authorize
 ;token_url = https://gitlab.com/oauth/token
@@ -745,8 +882,12 @@ role_attribute_path = ${GRAFANA_GITHUB_ROLE}
 ;tls_client_ca =
 ;use_pkce = true
 ;use_refresh_token = true
+;validate_id_token = false
+;jwk_set_url = https://gitlab.com/oauth/discovery/keys
+# Timeout in seconds for the token exchange request. Defaults to 15 seconds.
+;token_exchange_timeout = 15
 
-#################################### Google Auth ##########################
+#################################### Google Auth #########################
 [auth.google]
 ;name = Google
 ;icon = google
@@ -754,29 +895,43 @@ role_attribute_path = ${GRAFANA_GITHUB_ROLE}
 ;allow_sign_up = true
 ;auto_login = false
 ;client_id = some_client_id
-;client_secret = some_client_secret
+;client_secret =
 ;scopes = openid email profile
 ;auth_url = https://accounts.google.com/o/oauth2/v2/auth
 ;token_url = https://oauth2.googleapis.com/token
 ;api_url = https://openidconnect.googleapis.com/v1/userinfo
 ;signout_redirect_url =
 ;allowed_domains =
-;validate_hd =
+;validate_hd = true
 ;hosted_domain =
 ;allowed_groups =
 ;role_attribute_path =
 ;role_attribute_strict = false
 ;org_mapping =
 ;allow_assign_grafana_admin = false
-;skip_org_role_sync = false
+;skip_org_role_sync = true
 ;tls_skip_verify_insecure = false
 ;tls_client_cert =
 ;tls_client_key =
 ;tls_client_ca =
 ;use_pkce = true
 ;use_refresh_token = true
+;validate_id_token = false
+;jwk_set_url = https://www.googleapis.com/oauth2/v3/certs
+# Timeout in seconds for the token exchange request. Defaults to 15 seconds.
+;token_exchange_timeout = 15
 
 #################################### Grafana.com Auth ####################
+# legacy key names (so they work in env variables)
+[auth.grafananet]
+;enabled = false
+;allow_sign_up = true
+;client_id = some_id
+;client_secret =
+;scopes = user:email
+;allowed_organizations =
+;use_refresh_token = false
+
 [auth.grafana_com]
 ;name = Grafana.com
 ;icon = grafana
@@ -784,7 +939,7 @@ role_attribute_path = ${GRAFANA_GITHUB_ROLE}
 ;allow_sign_up = true
 ;auto_login = false
 ;client_id = some_id
-;client_secret = some_secret
+;client_secret =
 ;scopes = user:email
 ;allowed_organizations =
 ;skip_org_role_sync = false
@@ -799,10 +954,10 @@ role_attribute_path = ${GRAFANA_GITHUB_ROLE}
 ;auto_login = false
 ;client_authentication =
 ;client_id = some_client_id
-;client_secret = some_client_secret
+;client_secret =
 ;managed_identity_client_id =
 ;federated_credential_audience =
-;workload_identity_token_file =
+;workload_identity_token_file = /var/run/secrets/azure/tokens/azure-identity-token
 ;scopes = openid email profile
 ;auth_url = https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/authorize
 ;token_url = https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token
@@ -813,19 +968,26 @@ role_attribute_path = ${GRAFANA_GITHUB_ROLE}
 ;role_attribute_strict = false
 ;org_mapping =
 ;allow_assign_grafana_admin = false
+;force_use_graph_api = false
+;tls_skip_verify_insecure = false
+;tls_client_cert =
+;tls_client_key =
+;tls_client_ca =
 ;use_pkce = true
-# prevent synchronizing users organization roles
 ;skip_org_role_sync = false
 ;use_refresh_token = true
+# Timeout in seconds for the token exchange request. Defaults to 15 seconds.
+;token_exchange_timeout = 15
 
 #################################### Okta OAuth #######################
 [auth.okta]
 ;name = Okta
+;icon = okta
 ;enabled = false
 ;allow_sign_up = true
 ;auto_login = false
 ;client_id = some_id
-;client_secret = some_secret
+;client_secret =
 ;scopes = openid profile email groups
 ;auth_url = https://<tenant-id>.okta.com/oauth2/v1/authorize
 ;token_url = https://<tenant-id>.okta.com/oauth2/v1/token
@@ -835,8 +997,8 @@ role_attribute_path = ${GRAFANA_GITHUB_ROLE}
 ;allowed_groups =
 ;role_attribute_path =
 ;role_attribute_strict = false
-; org_attribute_path =
-; org_mapping =
+;org_attribute_path =
+;org_mapping =
 ;allow_assign_grafana_admin = false
 ;skip_org_role_sync = false
 ;tls_skip_verify_insecure = false
@@ -844,40 +1006,44 @@ role_attribute_path = ${GRAFANA_GITHUB_ROLE}
 ;tls_client_key =
 ;tls_client_ca =
 ;use_pkce = true
-;use_refresh_token = true
+;use_refresh_token = false
+;validate_id_token = false
+# jwk_set_url requires tenant-id: https://<tenant-id>.okta.com/oauth2/v1/keys
+;jwk_set_url =
+# Timeout in seconds for the token exchange request. Defaults to 15 seconds.
+;token_exchange_timeout = 15
 
-#################################### Generic OAuth ##########################
+#################################### Generic OAuth #######################
 [auth.generic_oauth]
 ;name = OAuth
 ;icon = signin
 ;enabled = false
-;name = OAuth
 ;allow_sign_up = true
 ;auto_login = false
 ;client_id = some_id
-;client_secret = some_secret
-;scopes = user:email,read:org
+;client_secret =
+;scopes = user:email
 ;empty_scopes = false
 ;email_attribute_name = email:primary
 ;email_attribute_path =
 ;login_attribute_path =
 ;name_attribute_path =
+;role_attribute_path =
+;role_attribute_strict = false
+;org_attribute_path =
+;org_mapping =
+;groups_attribute_path =
 ;id_token_attribute_name =
-;team_ids_attribute_path
-;auth_url = https://foo.bar/login/oauth/authorize
-;token_url = https://foo.bar/login/oauth/access_token
-;api_url = https://foo.bar/user
+;team_ids_attribute_path =
+;auth_url =
+;token_url =
+;api_url =
 ;signout_redirect_url =
 ;teams_url =
 ;allowed_domains =
+;allowed_groups =
 ;team_ids =
 ;allowed_organizations =
-;org_attribute_path =
-;org_mapping =
-;role_attribute_path =
-;role_attribute_strict = false
-;groups_attribute_path =
-;team_ids_attribute_path =
 ;tls_skip_verify_insecure = false
 ;tls_client_cert =
 ;tls_client_key =
@@ -887,42 +1053,52 @@ role_attribute_path = ${GRAFANA_GITHUB_ROLE}
 ;allow_assign_grafana_admin = false
 ;skip_org_role_sync = false
 ;use_refresh_token = false
+;validate_id_token = false
+;jwk_set_url =
+# Timeout in seconds for the token exchange request. Defaults to 15 seconds.
+;token_exchange_timeout = 15
 
 #################################### Basic Auth ##########################
 [auth.basic]
-enabled = false
+enabled = ${GRAFANA_AUTH_BASIC_ENABLED}
+# This setting will enable a stronger password policy for user's password under basic auth.
+# The password will need to comply with the following password policy
+# 1. Have a minimum of 12 characters
+# 2. Composed by at least 1 uppercase character
+# 3. Composed by at least 1 lowercase character
+# 4. Composed by at least 1 digit character
+# 5. Composed by at least 1 symbol character
 ;password_policy = false
+
 #################################### Auth Proxy ##########################
 [auth.proxy]
 ;enabled = false
 ;header_name = X-WEBAUTH-USER
 ;header_property = username
 ;auto_sign_up = true
-;sync_ttl = 60
-;whitelist = 192.168.1.1, 192.168.2.1
-;headers = Email:X-User-Email, Name:X-User-Name
-# Non-ASCII strings in header values are encoded using quoted-printable encoding
+;sync_ttl = 15
+;whitelist =
+;headers =
 ;headers_encoded = false
-# Read the auth proxy docs for details on what the setting below enables
 ;enable_login_token = false
 
 #################################### Auth JWT ##########################
 [auth.jwt]
-;enabled = true
-;enable_login_token = false
-;header_name = X-JWT-Assertion
-;email_claim = sub
-;username_claim = sub
-;email_attribute_path = jmespath.email
-;username_attribute_path = jmespath.username
-;jwk_set_url = https://foo.bar/.well-known/jwks.json
-;jwk_set_bearer_token_file = /path/to/token/file
-;jwk_set_file = /path/to/jwks.json
+;enabled = false
+;header_name =
+;email_claim =
+;username_claim =
+;email_attribute_path =
+;username_attribute_path =
+;jwk_set_url =
+;jwk_set_bearer_token_file =
+;jwk_set_file =
+;jwk_set_value =
 ;cache_ttl = 60m
-;expect_claims = {"aud": ["foo", "bar"]}
-;key_file = /path/to/key/file
-# Use in conjunction with key_file in case the JWT token's header specifies a key ID in "kid" field
-;key_id = some-key-id
+;expect_claims = {}
+;key_file =
+;key_value =
+;key_id =
 ;role_attribute_path =
 ;role_attribute_strict = false
 ;org_attribute_path =
@@ -932,16 +1108,14 @@ enabled = false
 ;url_login = false
 ;allow_assign_grafana_admin = false
 ;skip_org_role_sync = false
-;signout_redirect_url =
 ;tls_client_ca =
 ;tls_skip_verify_insecure = false
 
-#################################### Auth LDAP ##########################
+#################################### Auth LDAP ###########################
 [auth.ldap]
 ;enabled = false
 ;config_file = /etc/grafana/ldap.toml
 ;allow_sign_up = true
-# prevent synchronizing ldap users organization roles
 ;skip_org_role_sync = false
 
 # LDAP background sync (Enterprise only)
@@ -949,29 +1123,29 @@ enabled = false
 ;sync_cron = "0 1 * * *"
 ;active_sync_enabled = true
 
-#################################### AWS ###########################
+#################################### AWS #####################################
 [aws]
 # Enter a comma-separated list of allowed AWS authentication providers.
 # Options are: default (AWS SDK Default), keys (Access && secret key), credentials (Credentials field), ec2_iam_role (EC2 IAM Role)
-; allowed_auth_providers = default,keys,credentials
+;allowed_auth_providers = default,keys,credentials
 
 # Allow AWS users to assume a role using temporary security credentials.
 # If true, assume role will be enabled for all AWS authentication providers that are specified in aws_auth_providers
-; assume_role_enabled = true
+;assume_role_enabled = true
 
 # Specify max no of pages to be returned by the ListMetricPages API
-; list_metrics_page_limit = 500
+;list_metrics_page_limit = 500
 
 # Experimental, for use in Grafana Cloud only. Please do not set.
-; external_id =
+;external_id =
 
 # Sets the expiry duration of an assumed role.
 # This setting should be expressed as a duration. Examples: 6h (hours), 10d (days), 2w (weeks), 1M (month).
-; session_duration = "15m"
+;session_duration = "15m"
 
 # Set the plugins that will receive AWS settings for each request (via plugin context)
 # By default this will include all Grafana Labs owned AWS plugins, or those that make use of AWS settings (ElasticSearch, Prometheus).
-; forward_settings_to_plugins = cloudwatch, grafana-athena-datasource, grafana-redshift-datasource, grafana-x-ray-datasource, grafana-timestream-datasource, grafana-iot-sitewise-datasource, grafana-iot-twinmaker-app, grafana-opensearch-datasource, aws-datasource-provisioner, elasticsearch, prometheus
+;forward_settings_to_plugins = cloudwatch, grafana-athena-datasource, grafana-redshift-datasource, grafana-x-ray-datasource, grafana-timestream-datasource, grafana-iot-sitewise-datasource, grafana-iot-twinmaker-datasource, grafana-opensearch-datasource, grafana-dynamodb-datasource, aws-datasource-provisioner, elasticsearch, prometheus, grafana-amazonprometheus-datasource, grafana-aurora-datasource
 
 #################################### Azure ###############################
 [azure]
@@ -982,19 +1156,7 @@ enabled = false
 
 # A customized list of Azure cloud settings and properties, used by data sources which need this information when run in non-standard azure environments
 # When specified, this list will replace the default cloud list of AzureCloud, AzureChinaCloud, AzureUSGovernment and AzureGermanCloud
-;clouds_config = `[
-;		{
-;			"name":"CustomCloud1",
-;			"displayName":"Custom Cloud 1",
-;			"aadAuthority":"https://login.cloud1.contoso.com/",
-;			"properties":{
-;				"azureDataExplorerSuffix": ".kusto.windows.cloud1.contoso.com",
-;				"logAnalytics":            "https://api.loganalytics.cloud1.contoso.com",
-;				"portal":                  "https://portal.azure.cloud1.contoso.com",
-;				"prometheusResourceId":    "https://prometheus.monitor.azure.cloud1.contoso.com",
-;				"resourceManager":         "https://management.azure.cloud1.contoso.com"
-;			}
-;		}]`
+;clouds_config =
 
 # Specifies whether Grafana hosted in Azure service with Managed Identity configured (e.g. Azure Virtual Machines instance)
 # If enabled, the managed identity can be used for authentication of Grafana in Azure services
@@ -1065,24 +1227,60 @@ enabled = false
 ;username_assertion =
 
 # Set the plugins that will receive Azure settings for each request (via plugin context)
-# By default this will include all Grafana Labs owned Azure plugins, or those that make use of Azure settings (Azure Monitor, Azure Data Explorer, Prometheus, MSSQL).
-;forward_settings_to_plugins = grafana-azure-monitor-datasource, prometheus, grafana-azure-data-explorer-datasource, mssql, grafana-azureprometheus-datasourc
+# By default this will include all Grafana Labs owned Azure plugins, or those that make use of Azure settings (Azure Monitor, Azure Data Explorer, Prometheus, MSSQL, Azure Prometheus).
+;forward_settings_to_plugins = grafana-azure-monitor-datasource, prometheus, grafana-azure-data-explorer-datasource, mssql, grafana-azureprometheus-datasource, grafana-databricks-datasource
 
 # Specifies whether Entra password auth can be used for the MSSQL data source
 # Disabled by default, needs to be explicitly enabled
 ;azure_entra_password_credentials_enabled = false
+
 #################################### Role-based Access Control ###########
 [rbac]
+# If enabled, cache permissions in a in memory cache
 ;permission_cache = true
 
 # Reset basic roles permissions on boot
 # Warning left to true, basic roles permissions will be reset on every boot
-#reset_basic_roles = false
+;reset_basic_roles = false
 
 # Validate permissions' action and scope on role creation and update
-; permission_validation_enabled = true
+;permission_validation_enabled = true
 
-#################################### SMTP / Emailing ##########################
+# Comma-separated list of plugin IDs whose RBAC data (roles, permissions, seed assignments)
+# will be purged from the database at startup. Use this to clean up leftover data from
+# uninstalled or renamed plugins.
+# Example: plugins_cleanup = grafana-slo-app, grafana-irm-app
+;plugins_cleanup =
+
+# (Enterprise only) Master switch for the enterprise GlobalRole seeding process (the fixed-role
+# GlobalRole seeder and the basic-role aggregator), used with GlobalRole Mode 5.
+# Defaults to false: seeding is opt-in while the Mode 5 GlobalRole path is being
+# stabilised. When false the seeding background service is disabled regardless
+# of Mode 5 or license state. Has no effect in OSS.
+;global_role_seeding_enabled = false
+
+[rbac.iam_client]
+# Enable IAM integration for role fetching.
+;enabled = false
+
+[rbac.leader_election]
+# (Enterprise only) Enable HA leader election for the single-tenant GlobalRole seeder and
+# basic-role aggregator background services (enterprise, GlobalRole Mode 5).
+# When disabled (default) those services run with an always-leader elector,
+# preserving the previous server-lock behaviour. When enabled, leadership is
+# elected via the unified-storage SQL KV lease, so it requires the unified
+# storage SQL KV backend to be available (storage_type = unified with the SQL
+# KV backend enabled); otherwise startup fails.
+;enabled = false
+# How long a lease is held before another candidate may acquire it.
+;lease_duration = 15s
+# Interval between leader-election acquisition retries by a non-leader.
+;retry_period = 2s
+# Unique identity of this replica in the lease. Empty means auto-generated
+# from hostname and PID.
+;identity =
+
+#################################### SMTP / Emailing #####################
 [smtp]
 enabled = true
 host = ${SMTP_HOST}
@@ -1095,16 +1293,13 @@ skip_verify = true
 from_address = ${SMTP_SENDER}
 from_name = Grafana
 # EHLO identity in SMTP dialog (defaults to instance_name)
-;ehlo_identity = dashboard.example.com
+;ehlo_identity =
 # SMTP startTLS policy (defaults to 'OpportunisticStartTLS')
-;startTLS_policy = NoStartTLS
+;startTLS_policy =
 # Enable trace propagation in e-mail headers, using the 'traceparent', 'tracestate' and (optionally) 'baggage' fields (defaults to false)
 ;enable_tracing = false
-
 [smtp.static_headers]
 # Include custom static headers in all outgoing emails
-;Foo-Header = bar
-;Foo = bar
 
 [emails]
 ;welcome_email_on_sign_up = false
@@ -1113,17 +1308,17 @@ from_name = Grafana
 
 #################################### Logging ##########################
 [log]
-# Either "console", "file", "syslog". Default is console and  file
+# Either "console", "file", "syslog". Default is console and file
 # Use space to separate multiple modes, e.g. "console file"
 ;mode = console file
 
-# Either "debug", "info", "warn", "error". default is "info"
+# Either "debug", "info", "warn", "error". Default is "info"
 ;level = info
 
 # optional settings to set different levels for specific loggers. Ex filters = sqlstore:debug
 ;filters =
 
-# Set the default error message shown to users. This message is displayed instead of sensitive backend errors which should be obfuscated. Default is the same as the sample value.
+# Set the default error message shown to users. This message is displayed instead of sensitive backend errors which should be obfuscated.
 ;user_facing_default_error = "please inspect Grafana server log for details"
 
 # For "console" mode only
@@ -1184,7 +1379,7 @@ from_name = Grafana
 # level of internal logging for debugging Grafana Javascript Agent.
 # possible values are: 0 = OFF, 1 = ERROR, 2 = WARN, 3 = INFO, 4 = VERBOSE
 # more details: https://github.com/grafana/faro-web-sdk/blob/v1.3.7/docs/sources/tutorials/quick-start-browser.md#how-to-activate-debugging
-;internal_logger_level =
+;internal_logger_level = 0
 
 # Enables the Console instrumentation for Grafana Faro
 # See https://grafana.com/docs/grafana-cloud/monitor-applications/frontend-observability/instrument/console-instrumentation/
@@ -1196,55 +1391,58 @@ from_name = Grafana
 
 # Enables the Content Security Policy Violations instrumentation for Grafana Faro.
 # See https://grafana.com/docs/grafana-cloud/monitor-applications/frontend-observability/instrument/csp-violation-tracking/
-; instrumentations_csp_enabled = true
+;instrumentations_csp_enabled = true
 
 # Enables the Tracing instrumentation for Grafana Faro.
 # See https://grafana.com/docs/grafana-cloud/monitor-applications/frontend-observability/instrument/tracing-instrumentation/
 ;instrumentations_tracing_enabled = true
 
-# Enables sending attribution data for web vitals with the Performance instrumentation.
-# See https://grafana.com/docs/grafana-cloud/monitor-applications/frontend-observability/instrument/web-vitals/#web-vitals-attribution-data
-;web_vitals_attribution_enabled = true
+# Requests per second limit enforced per an extended period, for Grafana backend log ingestion endpoint (/log).
+;log_endpoint_requests_per_second_limit = 3
+
+# Max requests accepted per short interval of time for Grafana backend log ingestion endpoint (/log)
+;log_endpoint_burst_limit = 15
 
 # Enables the bot filter for the Grafana Faro JavaScript agent integration. Default is `false`. When enabled, it will filter out requests from known bots and crawlers.
 ;bot_filter_enabled = false
 
+#################################### Usage Quotas ########################
 [quota]
-; enabled = false
+;enabled = false
 
 #### set quotas to -1 to make unlimited. ####
 # limit number of users per Org.
-; org_user = 10
+;org_user = 10
 
 # limit number of dashboards per Org.
-; org_dashboard = 100
+;org_dashboard = 100
 
 # limit number of data_sources per Org.
-; org_data_source = 10
+;org_data_source = 10
 
 # limit number of api_keys per Org.
-; org_api_key = 10
+;org_api_key = 10
 
 # limit number of alerts per Org.
 ;org_alert_rule = 100
 
 # limit number of orgs a user can create.
-; user_org = 10
+;user_org = 10
 
 # Global limit of users.
-; global_user = -1
+;global_user = -1
 
 # global limit of orgs.
-; global_org = -1
+;global_org = -1
 
 # global limit of dashboards
-; global_dashboard = -1
+;global_dashboard = -1
 
 # global limit of api_keys
-; global_api_key = -1
+;global_api_key = -1
 
 # global limit on number of logged in users.
-; global_session = -1
+;global_session = -1
 
 # global limit of alerts
 ;global_alert_rule = -1
@@ -1253,7 +1451,7 @@ from_name = Grafana
 ;global_file = 1000
 
 # global limit of correlations
-; global_correlations = -1
+;global_correlations = -1
 
 # Limit of the number of alert rules per rule group.
 # This is not strictly enforced yet, but will be enforced over time.
@@ -1266,8 +1464,14 @@ from_name = Grafana
 
 #################################### Unified Alerting ####################
 [unified_alerting]
-#Enable the Unified Alerting sub-system and interface. When enabled we'll migrate all of your alert rules and notification channels to the new system. New alert rules will be created and your notification channels will be converted into an Alertmanager configuration. Previous data is preserved to enable backwards compatibility but new data is removed.```
-;enabled = true
+# Enable the Alerting sub-system and interface.
+;enabled =
+
+# Comma-separated list of contact point integration types to allow. If left blank, all types are allowed.
+# Valid types: prometheus-alertmanager, dingding, discord, email, googlechat, jira, kafka,
+# mqtt, oncall, opsgenie, pagerduty, pushover, sensugo, slack, sns, teams, telegram,
+# threema, victorops, webex, webhook, wecom.
+;allowed_integrations =
 
 # Comma-separated list of organization IDs for which to disable unified alerting. Only supported if unified alerting is enabled.
 ;disabled_orgs =
@@ -1289,6 +1493,10 @@ from_name = Grafana
 # Maximum silence size in bytes. Default: 0 (no limit).
 ;alertmanager_max_silence_size_bytes =
 
+# Maximum size of the expanded template output in bytes. Default: 10485760 (0 - no limit).
+# The result of template expansion will be truncated to the limit.
+;alertmanager_max_template_output_bytes =
+
 # Redis server address or addresses. It can be a single Redis address if using Redis standalone,
 # or a list of comma-separated addresses if using Redis Cluster/Sentinel.
 ;ha_redis_address =
@@ -1297,9 +1505,7 @@ from_name = Grafana
 ;ha_redis_cluster_mode_enabled = false
 
 # Set to true when using Redis in Sentinel mode. Mutually exclusive with ha_redis_cluster_mode_enabled.
-
 ;ha_redis_sentinel_mode_enabled = false
-
 
 # Redis Sentinel master name. Only applicable when ha_redis_sentinel_mode_enabled is set to true.
 ;ha_redis_sentinel_master_name =
@@ -1315,7 +1521,6 @@ from_name = Grafana
 ;ha_redis_sentinel_username =
 
 # The password that should be used to authenticate with Redis Sentinel.
-
 # Only applicable when ha_redis_sentinel_mode_enabled is set to true.
 ;ha_redis_sentinel_password =
 
@@ -1360,10 +1565,10 @@ from_name = Grafana
 # Allowed values: VersionTLS10, VersionTLS11, VersionTLS12, VersionTLS13
 ;ha_redis_tls_min_version =
 
-# Listen address/hostname and port to receive unified alerting messages for other Grafana instances. The port is used for both TCP and UDP. It is assumed other Grafana instances are also running on the same port. The default value is `0.0.0.0:9094`.
+# Listen address/hostname and port to receive unified alerting messages for other Grafana instances. The port is used for both TCP and UDP. It is assumed other Grafana instances are also running on the same port.
 ;ha_listen_address = "0.0.0.0:9094"
 
-# Listen address/hostname and port to receive unified alerting messages for other Grafana instances. The port is used for both TCP and UDP. It is assumed other Grafana instances are also running on the same port. The default value is `0.0.0.0:9094`.
+# Explicit address/hostname and port to advertise other Grafana instances. The port is used for both TCP and UDP.
 ;ha_advertise_address = ""
 
 # Comma-separated list of initial instances (in a format of host:port) that will form the HA cluster. Configuring this setting will enable High Availability mode for alerting.
@@ -1373,7 +1578,7 @@ from_name = Grafana
 # be assigned a position (e.g. 0, 1). We then multiply this position with the timeout to indicate how long should
 # each instance wait before sending the notification to take into account replication lag.
 # The interval string is a possibly signed sequence of decimal numbers, followed by a unit suffix (ms, s, m, h, d), e.g. 30s or 1m.
-;ha_peer_timeout = "15s"
+;ha_peer_timeout = 15s
 
 # The label is an optional string to include on each packet and stream.
 # It uniquely identifies the cluster and prevents cross-communication
@@ -1383,7 +1588,7 @@ from_name = Grafana
 # The interval between sending gossip messages. By lowering this value (more frequent) gossip messages are propagated
 # across cluster more quickly at the expense of increased bandwidth usage.
 # The interval string is a possibly signed sequence of decimal numbers, followed by a unit suffix (ms, s, m, h, d), e.g. 30s or 1m.
-;ha_gossip_interval = "200ms"
+;ha_gossip_interval = 200ms
 
 # Length of time to attempt to reconnect to a lost peer. Recommended to be short (<15m) when Grafana is running in a Kubernetes cluster.
 # The string is a possibly signed sequence of decimal numbers, followed by a unit suffix (ms, s, m, h, d), e.g. 30s or 1m.
@@ -1392,12 +1597,21 @@ from_name = Grafana
 # The interval between gossip full state syncs. Setting this interval lower (more frequent) will increase convergence speeds
 # across larger clusters at the expense of increased bandwidth usage.
 # The interval string is a possibly signed sequence of decimal numbers, followed by a unit suffix (ms, s, m, h, d), e.g. 30s or 1m.
-;ha_push_pull_interval = "60s"
+;ha_push_pull_interval = 60s
+
+# Enable single-node evaluation mode. When enabled, only one instance in the HA cluster evaluates
+# alert rules, reducing query load on data sources. Requires HA clustering to be configured.
+;ha_single_node_evaluation = false
+
+# The size of the message queue used to broadcast alerts from the primary instance to other instances
+# in single-node evaluation mode. Increase this value if you have many alert rules and see broadcast
+# messages being dropped. Only used when ha_single_node_evaluation is true.
+;ha_single_evaluation_alert_broadcast_queue_size = 200
 
 # Enable or disable alerting rule execution. The alerting UI remains visible.
 ;execute_alerts = true
 
-# Alert evaluation timeout when fetching data from the datasource. This option has a legacy version in the `[alerting]` section that takes precedence.
+# Alert evaluation timeout when fetching data from the datasource.
 # The timeout string is a possibly signed sequence of decimal numbers, followed by a unit suffix (ms, s, m, h, d), e.g. 30s or 1m.
 ;evaluation_timeout = 30s
 
@@ -1422,8 +1636,8 @@ from_name = Grafana
 
 # The interval string is a possibly signed sequence of decimal numbers, followed by a unit suffix (ms, s, m, h, d), e.g. 30s or 1m.
 ;min_interval = 10s
-# This is an experimental option to add parallelization to saving alert states in the database.
 
+# This is an experimental option to add parallelization to saving alert states in the database.
 # It configures the maximum number of concurrent queries per rule evaluated. The default value is 1
 # (concurrent queries per rule disabled).
 ;max_state_save_concurrency = 1
@@ -1435,12 +1649,8 @@ from_name = Grafana
 # If the feature flag 'alertingSaveStatePeriodic' is enabled, this is the size of the batch that is saved to the database at once.
 ;state_periodic_save_batch_size = 1
 
-# Enable jitter for periodic state saves to distribute database load over time.
-# When enabled, batches of alert instances are saved with calculated delays between them,
-# preventing all instances from being written to the database simultaneously.
-# This helps reduce database load spikes during periodic saves, especially beneficial
-# in environments with many alert instances or high database contention.
-# The jitter delays are distributed within 85% of the save interval to ensure completion before the next cycle.
+# Enable jitter for periodic state saving to distribute database load over time.
+# When enabled, batches are spread across the save interval to prevent load spikes.
 ;state_periodic_save_jitter_enabled = false
 
 # Disables the smoothing of alert evaluations across their evaluation window.
@@ -1448,7 +1658,6 @@ from_name = Grafana
 ;disable_jitter = false
 
 # Retention period for Alertmanager notification log entries.
-
 ;notification_log_retention = 5d
 
 # Duration for which a resolved alert state transition will continue to be sent to the Alertmanager.
@@ -1457,8 +1666,7 @@ from_name = Grafana
 # Defines the limit of how many alert rule versions
 # should be stored in the database for each alert rule in an organization including the current one.
 # 0 value means no limit
-
-;rule_version_record_limit= 0
+;rule_version_record_limit = 0
 
 # The retention period for deleted alerting rules.
 # Determines how long deleted rules are retained before being permanently removed.
@@ -1467,6 +1675,12 @@ from_name = Grafana
 # Default: 30d
 # 0 value means that rules are deleted permanently immediately.
 ;deleted_rule_retention = 30d
+
+# When enabled, email contact point recipients are restricted to users that belong to the organization (including disabled users).
+# This validation is applied only when creating or updating contact points, not at notification send time.
+# Enabling this flag does not retroactively validate existing contact points. Admins should manually audit
+# existing contact points after enabling this setting to ensure all recipients are org members.
+;limit_email_to_org_members = false
 
 [unified_alerting.screenshots]
 # Enable screenshots in notifications. You must have either installed the Grafana image rendering
@@ -1494,58 +1708,58 @@ from_name = Grafana
 [unified_alerting.reserved_labels]
 # Comma-separated list of reserved labels added by the Grafana Alerting engine that should be disabled.
 # For example: `disabled_labels=grafana_folder`
-disabled_labels =
+;disabled_labels =
 
 [unified_alerting.state_history]
 # Enable the state history functionality in Unified Alerting. The previous states of alert rules will be visible in panels and in the UI.
-; enabled = true
+;enabled = true
 
 # Select which pluggable state history backend to use. Either "annotations", "loki", "prometheus", or "multiple"
 # "loki" writes state history to an external Loki instance.
 # "prometheus" writes state history as GRAFANA_ALERTS metrics to a Prometheus-compatible data source.
 # "multiple" allows history to be written to multiple backends at once.
 # Defaults to "annotations".
-; backend = "multiple"
+;backend =
 
 # For "multiple" only.
 # Indicates the main backend used to serve state history queries.
 # Either "annotations" or "loki"
-; primary = "loki"
+;primary =
 
 # For "multiple" only.
 # Comma-separated list of additional backends to write state history data to.
-; secondaries = "annotations"
+;secondaries =
 
 # For "loki" only.
 # URL of the external Loki instance.
 # Either "loki_remote_url", or both of "loki_remote_read_url" and "loki_remote_write_url" is required for the "loki" backend.
-; loki_remote_url = "http://loki:3100"
+;loki_remote_url =
 
 # For "loki" only.
 # URL of the external Loki's read path. To be used in configurations where Loki has separated read and write URLs.
 # Either "loki_remote_url", or both of "loki_remote_read_url" and "loki_remote_write_url" is required for the "loki" backend.
-; loki_remote_read_url = "http://loki-querier:3100"
+;loki_remote_read_url =
 
 # For "loki" only.
 # URL of the external Loki's write path. To be used in configurations where Loki has separated read and write URLs.
 # Either "loki_remote_url", or both of "loki_remote_read_url" and "loki_remote_write_url" is required for the "loki" backend.
-; loki_remote_write_url = "http://loki-distributor:3100"
+;loki_remote_write_url =
 
 # For "loki" only.
 # Optional tenant ID to attach to requests sent to Loki.
-; loki_tenant_id = 123
+;loki_tenant_id =
 
 # For "loki" only.
 # Optional username for basic authentication on requests sent to Loki. Can be left blank to disable basic auth.
-; loki_basic_auth_username = "myuser"
+;loki_basic_auth_username =
 
 # For "loki" only.
 # Optional password for basic authentication on requests sent to Loki. Can be left blank.
-; loki_basic_auth_password = "mypass"
+;loki_basic_auth_password =
 
 # For "loki" only.
 # Optional max query length for queries sent to Loki. Default is 721h which matches the default Loki value.
-; loki_max_query_length = 360h
+;loki_max_query_length = 721h
 
 # For "loki" only.
 # Maximum size in bytes for queries sent to Loki. This limit is applied to user provided filters as well as system defined ones, e.g. applied by access control.
@@ -1555,54 +1769,57 @@ disabled_labels =
 
 # For "prometheus" only.
 # Target datasource UID for writing GRAFANA_ALERTS metrics.
-; prometheus_target_datasource_uid = "my-prometheus-uid"
+;prometheus_target_datasource_uid =
 
 # For "prometheus" only.
 # Metric name for the GRAFANA_ALERTS metric. Default is "GRAFANA_ALERTS".
-; prometheus_metric_name = "GRAFANA_ALERTS"
+;prometheus_metric_name = GRAFANA_ALERTS
 
 # For "prometheus" only.
 # Timeout for writing GRAFANA_ALERTS metrics to the target datasource. Default is 10s.
-; prometheus_write_timeout = 10s
+;prometheus_write_timeout = 10s
 
 [unified_alerting.state_history.external_labels]
 # Optional extra labels to attach to outbound state history records or log streams.
 # Any number of label key-value-pairs can be provided.
-; mylabelkey = mylabelvalue
+#
+# ex.
+# mylabelkey = mylabelvalue
 
 [unified_alerting.state_history.annotations]
-# This section controls retention of annotations automatically created while evaluating alert rules
-# when alerting state history backend is configured to be annotations (a setting [unified_alerting.state_history].backend
+# Controls retention of annotations automatically created while evaluating alert rules.
+# Alert state history backend must be configured to be annotations (see setting [unified_alerting.state_history].backend).
 
-# Configures for how long alert annotations are stored. Default is 0, which keeps them forever.
-# This setting should be expressed as an duration. Ex 6h (hours), 10d (days), 2w (weeks), 1M (month).
-max_age =
+# Configures how long alert annotations are stored for. Default is 0, which keeps them forever.
+# This setting should be expressed as a duration. Ex 6h (hours), 10d (days), 2w (weeks), 1M (month).
+;max_age =
 
 # Configures max number of alert annotations that Grafana stores. Default value is 0, which keeps all alert annotations.
-max_annotations_to_keep =
+;max_annotations_to_keep =
 
 [unified_alerting.notification_history]
 # Enable the notification history functionality in Unified Alerting.
 # Alertmanager notification logs will be stored in Loki.
-; enabled = false
+;enabled = false
 
 # URL of the Loki instance.
-; loki_remote_url =
+;loki_remote_url =
 
 # Optional tenant ID to attach to requests sent to Loki.
-; loki_tenant_id =
+;loki_tenant_id =
 
 # Optional username for basic authentication on requests sent to Loki. Can be left blank to disable basic auth.
-; loki_basic_auth_username =
+;loki_basic_auth_username =
 
 # Optional password for basic authentication on requests sent to Loki. Can be left blank.
-; loki_basic_auth_password =
+;loki_basic_auth_password =
 
 [unified_alerting.notification_history.external_labels]
-
 # Optional extra labels to attach to outbound notification history records or log streams.
 # Any number of label key-value-pairs can be provided.
-; mylabelkey = mylabelvalue
+#
+# ex.
+# mylabelkey = mylabelvalue
 
 [unified_alerting.prometheus_conversion]
 # Configuration options for converting Prometheus alerting and recording rules to Grafana rules.
@@ -1612,22 +1829,45 @@ max_annotations_to_keep =
 # This offset is applied and saved to the rule query during the conversion process from Prometheus to Grafana format.
 # The setting only affects rules imported after the configuration change is made and does not modify existing rules.
 # Accepts duration formats like: 30s, 1m, 1h.
-rule_query_offset = 1m
+;rule_query_offset = 1m
 
-#################################### Recording Rules #####################
+# Default data source UID to use for query execution when importing Prometheus rules.
+# This default is used when the X-Grafana-Alerting-Datasource-UID header is not provided.
+# If not set, the header becomes required.
+;default_datasource_uid =
+
 [recording_rules]
 # Enable recording rules.
-enabled = true
+;enabled = true
 
 # Request timeout for recording rule writes.
-timeout = 30s
+;timeout = 10s
 
 # Default data source UID to write to if not specified in the rule definition.
-default_datasource_uid =
+;default_datasource_uid =
 
 # Optional custom headers to include in recording rule write requests.
 [recording_rules.custom_headers]
 # exampleHeader = exampleValue
+
+[remote.alertmanager]
+# URL of the remote Alertmanager that will replace the internal one.
+# This URL should be the root path, Grafana will automatically append an "/alertmanager" suffix for certain HTTP calls.
+# Required if `enabled` is set to `true`.
+;url =
+
+# Tenant ID to use in requests to the Alertmanager.
+# It will also be used for the basic auth username if a password is configured.
+;tenant =
+
+# Optional password for basic authentication.
+# If not present, the tenant ID will be set in the X-Scope-OrgID header.
+;password =
+
+;sync_interval = 5m
+
+# Timeout for the HTTP client. Default is 30 seconds.
+;timeout = 30s
 
 #################################### Annotations #########################
 [annotations]
@@ -1659,10 +1899,72 @@ default_datasource_uid =
 # Configures max number of API annotations that Grafana keeps. Default value is 0, which keeps all API annotations.
 ;max_annotations_to_keep =
 
+[annotations.app_platform]
+# App Platform annotations API enables Kubernetes-style API access to annotations.
+# This provides a modern API for managing annotations via the grafana-app-sdk.
+
+# Enable the App Platform annotations API
+;enabled = false
+
+# Storage backend for annotations. Options: "legacy-sql" (default), "grpc", or "postgres"
+;store_backend = legacy-sql
+
+# Retention TTL for annotations - old data will be cleaned up
+;retention_ttl = 2160h
+
+# Generate and persist grafana.app/legacyID labels for legacy API compatibility.
+;enable_legacy_id = false
+
+# Maximum number of scopes that can be attached to a single annotation.
+# Set to 0 to disallow scopes entirely. Negative values are rejected.
+;max_scope_count = 5
+
+# Legacy API proxy phase. Values: off, proxy-writes, proxy-all.
+;api_migration_phase = off
+
+# URL of the standalone annotation API server. Empty disables the proxy.
+;api_server_url =
+
+# gRPC server address for remote annotation storage (only used when store_backend = "grpc")
+;grpc_address = localhost:9090
+
+# Enable TLS for gRPC connection (only used when store_backend = "grpc")
+;grpc_use_tls = false
+
+# Path to CA certificate file for TLS (optional, only used when grpc_use_tls = true)
+;grpc_tls_ca_file =
+
+# Skip TLS verification (insecure, for testing only, only used when grpc_use_tls = true)
+;grpc_tls_skip_verify = false
+
+# PostgreSQL connection string (only used when store_backend = "postgres")
+;postgres_connection_string =
+
+# Maximum number of connections in the Postgres pool (only used when store_backend = "postgres")
+;postgres_max_connections = 10
+
+# Maximum number of idle connections in the Postgres pool (only used when store_backend = "postgres")
+;postgres_max_idle_conns = 5
+
+# Maximum lifetime of a connection in the Postgres pool (only used when store_backend = "postgres")
+;postgres_conn_max_lifetime = 1h
+
+# TTL for tag query cache (only used when store_backend = "postgres")
+;postgres_tag_cache_ttl = 60s
+
+# Size of the tag query cache (only used when store_backend = "postgres")
+;postgres_tag_cache_size = 1000
+
 #################################### Explore #############################
 [explore]
 # Enable the Explore section
 ;enabled = true
+
+# set the default offset for the time picker
+;defaultTimeOffset = 1h
+
+# hides the download logs button in Explore
+;hide_logs_download = false
 
 #################################### Help #############################
 [help]
@@ -1677,7 +1979,7 @@ default_datasource_uid =
 #################################### News #############################
 [news]
 # Enable the news feed section
-; news_feed_enabled = true
+;news_feed_enabled = true
 
 #################################### Query #############################
 [query]
@@ -1694,20 +1996,22 @@ default_datasource_uid =
 # Short links that are never accessed will be deleted as cleanup. Time is set up in days. The default is -1 (never expire). Maximum value is 365.
 ;expire_time = -1
 
-#################################### Internal Grafana Metrics ##########################
+#################################### Internal Grafana Metrics ############
 # Metrics available at HTTP URL /metrics and /metrics/plugins/:pluginId
 [metrics]
-# Disable / Enable internal metrics
-;enabled           = true
-# Graphite Publish interval
-;interval_seconds  = 10
+;enabled = true
+;interval_seconds = 10
 # Disable total stats (stat_totals_*) metrics to be generated
 ;disable_total_stats = false
 # The interval at which the total stats collector will update the stats. Default is 1800 seconds.
 ;total_stats_collector_interval_seconds = 1800
+# Enable classic HTTP histogram buckets alongside native histograms
+# Set to false to only expose native histogram format (reduces cardinality)
+;classic_http_histogram_enabled = true
+
 #If both are set, basic auth will be required for the metrics endpoints.
-; basic_auth_username =
-; basic_auth_password =
+;basic_auth_username =
+;basic_auth_password =
 
 # Metrics environment info adds dimensions to the `grafana_environment_info` metric, which
 # can expose more information about the Grafana instance.
@@ -1715,27 +2019,29 @@ default_datasource_uid =
 #exampleLabel1 = exampleValue1
 #exampleLabel2 = exampleValue2
 
-# Send internal metrics to Graphite
+# Send internal Grafana metrics to graphite
 [metrics.graphite]
 # Enable by setting the address setting (ex localhost:2003)
 ;address =
 ;prefix = prod.grafana.%(instance_name)s.
 
 #################################### Grafana.com integration  ##########################
-# Url used to import dashboards directly from Grafana.com
+[grafana_net]
+;url = https://grafana.com
+
 [grafana_com]
 ;url = https://grafana.com
 ;api_url = https://grafana.com/api
-# Grafana instance - Grafana.com integration SSO API token
 ;sso_api_token = ""
+;proxy_token = ""
 
 #################################### Distributed tracing ############
 # Opentracing is deprecated use opentelemetry instead
 [tracing.jaeger]
-# Enable by setting the address sending traces to jaeger (ex localhost:6831)
-;address = localhost:6831
-# Tag that will always be included in when creating new spans. ex (tag1:value1,tag2:value2)
-;always_included_tag = tag1:value1
+# jaeger destination (ex localhost:6831)
+;address =
+# tag that will always be included in when creating new spans. ex (tag1:value1,tag2:value2)
+;always_included_tag =
 # Type specifies the type of the sampler: const, probabilistic, rateLimiting, or remote
 ;sampler_type = const
 # jaeger samplerconfig param
@@ -1748,17 +2054,18 @@ default_datasource_uid =
 ;sampler_param = 1
 # sampling_server_url is the URL of a sampling manager providing a sampling strategy.
 ;sampling_server_url =
-# Whether or not to use Zipkin propagation (x-b3- HTTP headers).
+# Whether or not to use Zipkin span propagation (x-b3- HTTP headers).
 ;zipkin_propagation = false
 # Setting this to true disables shared RPC spans.
 # Not disabling is the most common setting when using Zipkin elsewhere in your infrastructure.
 ;disable_shared_zipkin_spans = false
 
 [tracing.opentelemetry]
+
 # attributes that will always be included in when creating new spans. ex (key1:value1,key2:value2)
-;custom_attributes = key1:value1,key2:value2
+;custom_attributes =
 # Type specifies the type of the sampler: const, probabilistic, rateLimiting, or remote
-; sampler_type = remote
+;sampler_type =
 # Sampler configuration parameter
 # for "const" sampler, 0 or 1 for always false/true respectively
 # for "probabilistic" sampler, a probability between 0.0 and 1.0
@@ -1766,40 +2073,43 @@ default_datasource_uid =
 # for "remote" sampler, param is the same as for "probabilistic"
 #   and indicates the initial sampling rate before the actual one
 #   is received from the sampling server (set at sampling_server_url)
-; sampler_param = 0.5
+;sampler_param =
 # specifies the URL of the sampling server when sampler_type is remote
-; sampling_server_url = http://localhost:5778/sampling
+;sampling_server_url =
 
 [tracing.opentelemetry.jaeger]
 # jaeger destination (ex http://localhost:14268/api/traces)
-; address = http://localhost:14268/api/traces
+;address =
 # Propagation specifies the text map propagation format: w3c, jaeger
-; propagation = jaeger
+;propagation =
 
 # This is a configuration for OTLP exporter with GRPC protocol
 [tracing.opentelemetry.otlp]
 # otlp destination (ex localhost:4317)
-; address = localhost:4317
+;address =
 # Propagation specifies the text map propagation format: w3c, jaeger
-; propagation = w3c
+;propagation =
 # Toggles the insecure communication setting, defaults to `true`.
 # When set to `false`, the OTLP client will use TLS credentials with the default system cert pool for communication.
-; insecure = false
+;insecure =
 
-#################################### External image storage ##########################
+#################################### External Image Storage ##############
 [external_image_storage]
 # Used for uploading images to public servers so they can be included in slack/email messages.
-# you can choose between (s3, webdav, gcs, azure_blob, local)
+# You can choose between (s3, webdav, gcs, azure_blob, local)
 ;provider =
 
 [external_image_storage.s3]
 ;endpoint =
 ;path_style_access =
+;bucket_url =
 ;bucket =
 ;region =
 ;path =
 ;access_key =
 ;secret_key =
+;enable_presigned_urls = false
+;presigned_url_expiration =
 
 [external_image_storage.webdav]
 ;url =
@@ -1827,7 +2137,10 @@ default_datasource_uid =
 # Options to configure a remote HTTP image rendering service, e.g. using https://github.com/grafana/grafana-image-renderer.
 # URL to a remote HTTP image renderer service, e.g. http://localhost:8081/render, will enable Grafana to render panels and dashboards to PNG-images using HTTP requests to an external service.
 ;server_url =
+# Path to the PEM-encoded CA certificate file from the Image Renderer server.
+;ca_cert_file_path =
 # If the remote HTTP image renderer service runs on a different server than the Grafana server you may have to configure this to a URL where Grafana is reachable, e.g. http://grafana.domain/.
+# The `callback_url` can also be configured to support usage of the image renderer running as a plugin with support for SSL / HTTPS. For example https://localhost:3000/.
 ;callback_url =
 # An auth token that will be sent to and verified by the renderer. The renderer will deny any request without an auth token matching the one configured on the renderer side.
 ;renderer_token = -
@@ -1847,7 +2160,8 @@ default_datasource_uid =
 ;default_image_scale = 1
 
 [panels]
-# If set to true Grafana will allow script tags in text panels. Not recommended as it enable XSS vulnerabilities.
+# here for to support old env variables, can remove after a few months
+;enable_alpha = false
 ;disable_sanitize_html = false
 
 [plugins]
@@ -1856,7 +2170,7 @@ default_datasource_uid =
 # Enter a comma-separated list of plugin identifiers to identify plugins to load even if they are unsigned. Plugins with modified signatures are never loaded.
 ;allow_loading_unsigned_plugins =
 # Enable or disable installing / uninstalling / updating plugins directly from within Grafana.
-;plugin_admin_enabled = false
+;plugin_admin_enabled = true
 ;plugin_admin_external_manage_enabled = false
 ;plugin_catalog_url = https://grafana.com/grafana/plugins/
 # Enter a comma-separated list of plugin identifiers to hide in the plugin catalog.
@@ -1864,20 +2178,34 @@ default_datasource_uid =
 # Log all backend requests for core and external plugins.
 ;log_backend_requests = false
 # Disable download of the public key for verifying plugin signature.
-; public_key_retrieval_disabled = false
+;public_key_retrieval_disabled = false
 # Force download of the public key for verifying plugin signature on startup. If disabled, the public key will be retrieved every 10 days.
 # Requires public_key_retrieval_disabled to be false to have any effect.
-; public_key_retrieval_on_startup = false
+;public_key_retrieval_on_startup = false
 # Enter a comma-separated list of plugin identifiers to avoid loading (including core plugins). These plugins will be hidden in the catalog.
-; disable_plugins =
+;disable_plugins =
+# Comma separated list of plugin ids for which all host environment variables should be forwarded to the plugin process.
+;forward_host_env_vars =
 # Comma separated list of plugin ids to install as part of the startup process.
 # These will be installed, by default, asynchronously (in the background) while starting Grafana.
-; preinstall =
+;preinstall =
 # Comma separated list of plugin ids to install before the startup process
 # These will be installed before starting Grafana. Useful when used with provisioning.
-; preinstall_sync =
-# Disables preinstall feature. It has the same effect as setting preinstall to an empty list.
-; preinstall_disabled = false
+;preinstall_sync =
+# Disables preinstall feature. It has the same effect as setting preinstall to an empty list.
+;preinstall_disabled = false
+# Update strategy for plugins.
+# Available options: "latest", "minor"
+;update_strategy = minor
+# Enable automatic updates for preinstalled plugins on startup.
+# When enabled, preinstalled plugins without a pinned version will be updated to the latest version.
+;preinstall_auto_update = true
+
+#################################### Marketplace #########################
+[marketplace]
+# Directory containing per-plugin marketplace licenses named license-<plugin_id>.jwt
+# Defaults to the Grafana data path, alongside the default Enterprise license.jwt file.
+;license_directory =
 
 #################################### Grafana Live ##########################################
 [live]
@@ -1886,12 +2214,21 @@ default_datasource_uid =
 # tuning. 0 disables Live, -1 means unlimited connections.
 ;max_connections = 100
 
+# message_size_limit is the maximum size in bytes of Websocket messages from clients. Defaults to 8MB.
+# The limit can be disabled by setting it to -1.
+;message_size_limit = 8388608
+
+# client_queue_max_size is the maximum size in bytes of the client queue
+# for Live connections. Defaults to 4MB.
+;client_queue_max_size = 4194304
+
 # allowed_origins is a comma-separated list of origins that can establish connection with Grafana Live.
 # If not set then origin will be matched over root_url. Supports wildcard symbol "*".
 ;allowed_origins =
 
 # engine defines an HA (high availability) engine to use for Grafana Live. By default no engine used - in
-# this case Live features work only on a single Grafana server. Available options: "redis".
+# this case Live features work only on a single Grafana server.
+# Available options: "redis".
 ;ha_engine =
 
 # ha_engine_address sets a connection address for Live HA engine. Depending on engine type address format can differ.
@@ -1903,10 +2240,6 @@ default_datasource_uid =
 
 # ha_prefix is a prefix for keys in the HA engine. It's used to separate keys for different Grafana instances.
 ;ha_prefix =
-
-# client_queue_max_size is the maximum size in bytes of the client queue
-# for Live connections. Defaults to 4MB.
-;client_queue_max_size = 
 
 #################################### Grafana Image Renderer Plugin ##########################
 [plugin.grafana-image-renderer]
@@ -1978,19 +2311,46 @@ default_datasource_uid =
 ;grpc_port =
 
 [enterprise]
-# Path to a valid Grafana Enterprise license.jwt file
 ;license_path =
 
 [feature_toggles]
-# there are currently two ways to enable feature toggles in the `grafana.ini`.
-# you can either pass an array of feature you want to enable to the `enable` field or
-# configure each toggle by setting the name of the toggle to true/false. Toggles set to true/false
-# will take presidence over toggles in the `enable` list.
+# Feature toggles are configured in this section, each toggle is a key-value
+# pair with the toggle name as the key and the value as true/false.
 
-;enable = feature1,feature2
+# Some features are enabled by default, see:
+# https://grafana.com/docs/grafana/next/setup-grafana/configure-grafana/feature-toggles/
+# To enable features by default, set `Expression:  "true"` in:
+# https://github.com/grafana/grafana/blob/main/pkg/services/featuremgmt/registry.go
 
-;feature1 = true
-;feature2 = false
+# The feature_toggles section supports feature flags of a number of types,
+# including boolean, string, integer, float, and structured values, following the OpenFeature specification.
+#
+# feature1 = true
+# feature2 = false
+# feature3 = "foobar"
+# feature4 = 1.5
+# feature5 = { "foo": "bar" }
+
+# The `enable` entry is deprecated and will be removed in a future major
+# release. Use individual entries as shown above instead.
+;enable =
+
+[feature_toggles.openfeature]
+# This is EXPERIMENTAL. Please, do not use this section
+;enable_api = true
+;provider = static
+;url =
+# cache_ttl sets the TTL for client-side caching of flag evaluation responses. Set to 0 to disable.
+;cache_ttl = 1m
+
+[feature_toggles.openfeature.context]
+# This is EXPERIMENTAL. Please, do not use this section
+# foo = bar
+
+[time_picker]
+# Custom quick ranges for the time picker. Each quick range has a display name, a from value, and a to value.
+# Format: [{"from":"now-5m","to":"now","display":"Last 5 minutes"},{"from":"now-15m","to":"now","display":"Last 15 minutes"}]
+;quick_ranges =
 
 [date_formats]
 # For information on what formatting patterns that are supported https://momentjs.com/docs/#/displaying/
@@ -2012,24 +2372,19 @@ default_datasource_uid =
 # Default timezone for user preferences. Options are 'browser' for the browser local timezone or a timezone name from IANA Time Zone database, e.g. 'UTC' or 'Europe/Amsterdam' etc.
 ;default_timezone = browser
 
-[time_picker]
-# Custom quick ranges for the time picker. Each quick range has a display name, a from value, and a to value.
-# Format: [{"from":"now-5m","to":"now","display":"Last 5 minutes"},{"from":"now-15m","to":"now","display":"Last 15 minutes"}]
-;quick_ranges =
-
 [expressions]
 # Enable or disable the expressions functionality.
 ;enabled = true
 
+# Maximum estimated memory (in bytes) for a single math expression binary
+# operation. Memory usage is estimated before the expression runs. Protects
+# against cartesian explosions when label sets on both sides of a binary
+# operation are incompatible. Set to 0 to disable. Default: 1073741824 (1 GiB).
+;math_expression_memory_limit = 1073741824
+
 [geomap]
 # Set the JSON configuration for the default basemap
-;default_baselayer_config = `{
-;  "type": "xyz",
-;  "config": {
-;    "attribution": "Open street map",
-;    "url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-;  }
-;}`
+;default_baselayer_config =
 
 # Enable or disable loading other base map layers
 ;enable_custom_baselayers = true
@@ -2037,37 +2392,59 @@ default_datasource_uid =
 #################################### Support Bundles #####################################
 [support_bundles]
 # Enable support bundle creation (default: true)
-#enabled = true
+;enabled = true
 # Only server admins can generate and view support bundles (default: true)
-#server_admin_only = true
+;server_admin_only = true
 # If set, bundles will be encrypted with the provided public keys separated by whitespace
-#public_keys = ""
+;public_keys = ""
+
+#################################### Storage ################################################
+
+[storage]
+# Allow uploading SVG files without sanitization.
+;allow_unsanitized_svg_upload = false
+
+
+#################################### Search ################################################
+
+[search]
+# Defines the number of dashboards loaded at once in a batch during a full reindex.
+# This is a temporary settings that might be removed in the future.
+;dashboard_loading_batch_size = 200
+
+# Defines the frequency of a full search reindex.
+# This is a temporary settings that might be removed in the future.
+;full_reindex_interval = 5m
+
+# Defines the frequency of partial index updates based on recent changes such as dashboard updates.
+# This is a temporary settings that might be removed in the future.
+;index_update_interval = 10s
 
 
 # Move an app plugin referenced by its id (including all its pages) to a specific navigation section
-# Dependencies: needs the `topnav` feature to be enabled
+# Format: <Plugin ID> = <Section ID> <Sort Weight>
 [navigation.app_sections]
-# The following will move an app plugin with the id of `my-app-id` under the `cfg` section
-# my-app-id = cfg
 
 # Move a specific app plugin page (referenced by its `path` field) to a specific navigation section
+# Format: <Page URL> = <Section ID> <Sort Weight>
 [navigation.app_standalone_pages]
-# The following will move the page with the path "/a/my-app-id/my-page" from `my-app-id` to the `cfg` section
-# /a/my-app-id/my-page = cfg
+
 
 #################################### Secure Socks5 Datasource Proxy #####################################
 [secure_socks_datasource_proxy]
-; enabled = false
-; root_ca_cert =
-; client_key =
-; client_cert =
-; server_name =
+;enabled = false
+;root_ca_cert =
+;client_key =
+;client_cert =
+;server_name =
 # The address of the socks5 proxy datasources should connect to
-; proxy_address =
-; show_ui = true
-; allow_insecure = false
+;proxy_address =
+# Determines if the secure socks proxy should be shown on the datasources page, defaults to true if the feature is enabled
+;show_ui = true
+# Disables TLS in the secure socks proxy
+;allow_insecure = false
 
-############################## Public Dashboards #####################################
+#################################### Public Dashboards #####################################
 [public_dashboards]
 # Set to false to disable public dashboards
 ;enabled = true
@@ -2099,7 +2476,7 @@ default_datasource_uid =
 # How long to wait for a request to create to delete an access policy to complete
 ;delete_access_policy_timeout = 5s
 # The domain name used to access cms
-;domain = grafana-dev.net
+;domain = grafana.net
 # Folder used to store snapshot files. Defaults to the home dir
 ;snapshot_folder = ""
 # How frequently should the frontend UI poll for changes while resources are migrating
@@ -2111,16 +2488,27 @@ default_datasource_uid =
 # Either "db" to store snapshots in the database or "fs" to store in the file system.
 ;resource_storage_type = "db"
 
+###################################### Secrets Manager ######################################
 [secrets_manager]
 # Current key provider used for envelope encryption
 ;encryption_provider = secret_key.v1
 
 # These flags are required in on-prem installations for GitSync to work
 #
+# Whether to register the MT CRUD API
+;register_api_server = true
 # Whether to create the MT secrets management database
 ;run_secrets_db_migrations = true
 # Whether to run the data key id migration. Requires that RunSecretsDBMigrations is also true.
 ;run_data_key_migration = true
+
+# (Enterprise only) Configuration for Redis data key cache for the envelope encryption module.
+;data_keys_cache_use_redis = false
+;data_keys_cache_ttl = 15m
+;data_keys_cache_cleanup_interval = 1m
+;data_keys_cache_encryption_key =
+;data_keys_redis_url = redis://127.0.0.1:6379/0
+;data_keys_redis_prefix = gsm
 
 [secrets_manager.encryption.secret_key.v1]
 # Used to encrypt data keys
@@ -2132,4 +2520,93 @@ default_datasource_uid =
 [frontend_dev]
 # Should UI tests fail when console log/warn/erroring?
 # Does not affect the result when running on CI - only for allowing devs to choose this behaviour locally
-; fail_tests_on_console = true
+;fail_tests_on_console = true
+
+#################################### Plugin API Restrictions ##########################################
+# Configure which plugins can access specific restricted APIs.
+# Use plugin IDs or regex patterns. Allow list takes precedence over block list.
+
+[plugins.restricted_apis_allowlist]
+;dashboardMutationAPI = grafana-assistant-app
+
+[plugins.restricted_apis_blocklist]
+# Example: Block specific plugins from accessing an API
+# addPanel = "untrusted-.*, experimental-.*"
+
+#################################### Provisioning ##########################################
+[provisioning]
+# List of targets that can be controlled by a repository, separated by |.
+# Instance means the whole grafana instance will be controlled by a repository.
+# Folder limits it to a folder within the grafana instance.
+# Folderless syncs to the top level without creating a wrapper folder.
+;allowed_targets = folder|folderless
+
+# Whether image rendering is allowed for dashboard previews.
+# Requires image rendering service to be configured.
+;allow_image_rendering = true
+
+# Allow http:// repository URLs together with a configured token. This sends the token in
+# cleartext on every git operation, so it is rejected by default. Intended for local/dev only
+# (it is also implicitly allowed when app_mode = development).
+;allow_insecure = false
+
+# The minimum sync interval that can be set for a repository. This is how often the controller
+# will check if there has been any changes to the repository not propagated by a webhook.
+# The minimum value is 10 seconds.
+;min_sync_interval = 10s
+
+# List of enabled repository types, separated by |.
+# When empty, defaults are applied by each subsystem.
+# Supported types: local, git, github.
+# Grafana Enterprise additionally supports bitbucket and gitlab.
+;repository_types =
+
+# Maximum number of repositories allowed. Default is 10.
+# Set to 0 for unlimited repositories.
+;max_repositories = 10
+
+# Maximum number of resources (dashboards, folders, etc.) allowed per repository.
+# Default is 0, which means unlimited.
+;max_resources_per_repository = 0
+
+# The maximum number of changes allowed in a single incremental sync.
+# If the number of changes exceeds this value, a full sync will be performed.
+# Default is 100. If set to 0, the size check is disabled.
+;max_incremental_changes = 100
+
+# Maximum file size in bytes for files read from or written to a provisioning repository
+# through the files API. Applies symmetrically to GET (reads) and POST/PUT writes.
+# Default is 5242880 bytes (5 MiB, i.e. 5 * 1024 * 1024). Set to 0 (or any
+# non-positive value) for unlimited.
+;max_file_size = 5242880
+
+# Per-resource apply timeout during a repository sync. Bounds how long applying a single
+# resource (or folder) may take before that operation is cancelled. Large resources (e.g.
+# multi-MB dashboards) can exceed a short timeout and fail with "context deadline exceeded"
+# (or "context canceled" from the apiserver as the client aborts). Accepts a duration (e.g.
+# 30s, 2m). Default is 30s. A non-positive value falls back to the default.
+;sync_resource_timeout = 30s
+
+# Public-facing root URL of this Grafana instance, used by provisioning to construct URLs
+# that must be reachable from external systems (e.g. GitHub PR-comment image fetchers and
+# GitHub webhook deliveries). When empty, falls back to [server] root_url. Set this when
+# root_url points at an internal/cluster URL but provisioning needs an externally-reachable
+# host. Analogous to [rendering] callback_url for the image renderer plugin.
+;public_root_url =
+
+# Resources that can be managed from the UI through provisioning, comma-separated, each as
+# "<group>/<Kind>[:cap...]". The API version and plural resource are resolved at runtime via
+# discovery, so only the group and kind are configured. Capabilities (all default to off):
+#   folder         - folder-scoped; carries the folder annotation on write (else org-scoped)
+#   skipvalidation - skip validation on write (else validated)
+#   disabled       - declared but not acted on; still surfaced on the settings endpoint
+# Adding or enabling a resource is a config change. Library panels and playlists are declared
+# but disabled by default.
+;resources = folder.grafana.app/Folder:folder, dashboard.grafana.app/Dashboard:folder, dashboard.grafana.app/LibraryPanel:folder:disabled, playlist.grafana.app/Playlist:disabled
+
+#################################### Unified Storage ####################################
+[unified_storage]
+# index_path is the path where unified storage can store its index files for search.
+# If empty, defaults to "<data_dir>/unified-search/bleve" (see [paths] section).
+# Please note that sharing the same index_path between multiple running Grafana instances is not supported.
+;index_path =
