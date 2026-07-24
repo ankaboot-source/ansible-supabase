@@ -1,129 +1,148 @@
-# Ansible Supabase & Monitoring stack
+# Ansible Supabase
 
-This repository provides an Ansible-based automation toolkit for deploying a self-hosted Supabase stack, Docker, a Caddy reverse proxy with [caddy-security](https://github.com/authcrunch/authcrunch.github.io) for OAuth2-protected access, and a full monitoring suite (Grafana, Prometheus, Loki, and their agents).
+One-command deployment of a **self-hosted Supabase stack** on any Debian/Ubuntu server. The playbook installs Docker, clones the latest Supabase release, generates all configuration files, and starts the full stack with a single command.
 
-It is built for fast, repeatable, production-ready deployments on fresh Debian-based servers.
-
-## 📑 Table of Contents
-
-- [🚀 Features](#-features)
-  - [Docker Role](#docker-role)
-  - [Supabase Role](#supabase-role)
-  - [Monitor Role](#monitor-role)
-  - [Caddy Role](#caddy-role)
-- [🛠 Requirements](#-requirements)
-- [📥 Installation](#--installation)
-  - [1. Clone the repository](#1-clone-the-repository)
-  - [2. Register OAuth2 Application](#2-register-oauth2-application)
-  - [3. Caddy SSO and DNS configuration](#3-Caddy-SSO-and-DNS-configuration)
-  - [4. Monitor role configuration](#4-Monitor-role-configuration)
-  - [5. Configure environment variables](#5-configure-environment-variables) 
-  - [6. Starting up the roles](#6-Starting-up-the-roles)
----
-
-<details open>
-<summary><h2>🚀 Features</h2></summary>
-
-### **Docker Role**
-- Installs and configures Docker & Docker Compose.
-
-### **Supabase Role**
-- Deploys the entire Supabase ecosystem with Docker Compose.
-- Generates all required configuration files (docker-compose.yml, kong.yml, .env) via Jinja2 templates.
-- Allows templates customization to disable unused services or apply configuration changes dynamically.
-
-### **Monitor Role**
-A full observability solution including:
-
-- **Grafana** (with provisioned dashboards & datasources)
-- **Prometheus**
-- **Node Exporter**
-- **cAdvisor**
-- **Postgres Exporter**
-- **Loki** (logs)
-- **Promtail**
-
-### **Caddy Role**
-- Installs and configure Caddy reverse proxy + [caddy-security](https://github.com/authcrunch/authcrunch.github.io) module.
-- Provides automatic TLS/HTTPS for Supabase and Grafana endpoints.
-- Protects Supabase dashboard with OAuth2 Single Sign-On (SSO), with support for three provider options: GitHub, GitLab, and Discord.
+For production hardening (SSO, monitoring, firewall, backups, encryption) see [docs/advanced-docs.md](docs/advanced-docs.md).
 
 ---
 
-</details>
-<details open>
-<summary><h2>🛠 Requirements</h2></summary>
+## 🚀 Quick Start
 
-- Debian-based systems
-- 3 subdomains records, one for authentication and two for reverse proxying Supabase and Grafana.
-- Register Oauth2 application within one of the supported providers:
+### 1. 📋 Prerequisites
 
-  - GitHub
-  - GitLab
-  - Discord
+- A **Debian/Ubuntu server** with root or sudo access
+- A **domain** with a DNS A record pointing to your server (e.g. `sb.example.com`)
+- Ports **80** and **443** reachable for auto Let's Encrypt TLS and reverse proxy
 
----
+### 2. 📥 Clone
 
-</details>
-<details open>
-<summary><h2> 📥 Installation</h2></summary>
-
-### **1. Clone the repository**
 ```bash
-https://github.com/ankaboot-source/ansible-supabase.git
+git clone https://github.com/ankaboot-source/ansible-supabase.git
 cd ansible-supabase
 ```
-### **2. Register OAuth2 Application**
 
+### 3. 🔑 Generate Supabase Required Keys
 
-Below are the steps for each provider. After creating the app, you will receive:
-- **Client ID**
-- **Client Secret**
+```bash
+sh generate-keys.sh
+```
 
-You will later place these values inside your `env/supabase.yml`.
+This updates `env/supabase.yml` with all Supabase keys (JWT, anon key, service role key, Postgres password, and all cryptographic tokens).
 
+### 4. ⚙️ Configure `env/supabase.yml`
 
-#### **GitHub**
-1. Go to: https://github.com/settings/developers
-2. Click **"OAuth Apps" → "New OAuth app"**
-3. Set Redirect URI : https://your-supabase-subdomain/oauth2/github/authorization-code-callback
-4. Set Home page URL : https://your-supabase-domain/project/default
+Set the minimum required Supabase variables (every field tagged `#REQUIRED`):
 
-#### **GitLab**
-1. Go to: https://gitlab.com/-/profile/applications
-2. Click **"Add new application"**
-3. Set Redirect URI : https://your-supabase-subdomain/oauth2/gitlab/authorization-code-callback
-4. Enable openid, profile and email scopes
+```yaml
+# ── System User ──────────────────────────
+deploy_user: your-ssh-username
+docker_users:
+  - your-ssh-username
 
-#### **Discord**
-1. Go to: https://discord.com/developers/applications
-2. Create a new application
-3. Set Redirect URI : https://your-supabase-subdomain/oauth2/discord/authorization-code-callback
+# ── Supabase Secrets ( Auto generated from step 3) ──────
+postgres_db_pwd: <strong-password>
+sb_jwt_secret: <jwt-secret-from-generator>
+sb_anon_key: <anon-key-from-generator>
+sb_service_role_key: <service-role-key-from-generator>
+secret_key_base: ...
+vault_enc_key: ...
+pg_meta_crypto_key: ...
+logflare_public_access_token: ...
+logflare_private_access_token: ...
+s3_protocol_access_key_id: ...
+s3_protocol_access_key_secret: ...
+pooler_tenant_id: pooler
 
-#### **Sources:**
-- GitHub : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0007-github
-- GitLab : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0009-gitlab
-- Discord : https://docs.authcrunch.com/docs/authenticate/oauth/backend-oauth2-0013-discord
----
+# ── Public URLs ──────────────────────────
+site_url: https://app.example.com          # Your app's public URL
+api_external_url: https://sb.example.com   # Supabase API endpoint (used by Studio)
 
-### **3. Caddy SSO and DNS configuration**
+# ── SMTP (for auth emails) ───────────────
+smtp_admin_email: user@example.com
+smtp_host: mail.example.com
+smtp_user: user@example.com
+smtp_password: <smtp-password>
+```
 
-- Refer to [caddy/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/caddy/README.md).
+#### Caddyfile Configuration (Reverse Proxy)
 
-### **4. Monitor role configuration**
+The Caddyfile configuration in `env/supabase.yml` defines how incoming requests are routed. For a minimal setup without SSO or basic auth, configure the `projects` section like this:
 
-- Refer to [monitor/README.md](https://github.com/ankaboot-source/ansible-supabase/blob/main/roles/monitor/README.md).
+```yaml
+projects:
+  supabase:
+    log_file: supabase-access
+    domain: "sb.example.com"
+    upstreams:
+      # Dashboard
+      - targets: ["localhost:3001"]
+        paths: [""]
+      # API routes
+      - targets: ["localhost:8000"]
+        paths:
+          - /rest/v1/*
+          - /auth/v1/*
+          - /realtime/v1/*
+          - /storage/v1/*
+          - /functions/v1/*
+```
 
-### **5. Configure environment variables**
-All roles configurations are within the following file, make sure to update variables tagged with `#REQUIRED`
->
-> [env/supabase.yml](https://github.com/ankaboot-source/ansible-supabase/blob/main/env/supabase.yml)
->
+> **Note:** The existing `env/supabase.yml` includes basic auth and IP whitelisting for basic dashboard protection. You can keep that configuration for minimal access control, or replace it with the example above for an unprotected dashboard. For SSO and production-grade security, see [docs/advanced-docs.md](docs/advanced-docs.md).
 
-### **6. Starting up the roles**
-Use the following script to install Ansible, Git and execute all roles:
+### 5. ▶️ Deploy
+
+Run the installer (installs Ansible + Git if needed, then executes the playbook):
 
 ```bash
 sudo ./install.sh
 ```
-</details>
+
+To see what will happen without making changes:
+
+```bash
+sudo ./install.sh -d
+```
+
+
+
+> **⚠️ Security Notice:** This minimal setup exposes the Supabase dashboard without any authentication. Anyone who can reach your server can access the Studio UI. For production deployments, enable basic auth, SSO, firewall rules, or the full Caddy reverse proxy — see [docs/advanced-docs.md](docs/advanced-docs.md).
+
+---
+
+## 📦 What Gets Deployed
+
+| Container | Service | Port |
+|-----------|---------|------|
+| `studio` | Supabase Dashboard | 3001 |
+| `kong` | API Gateway | 8000 |
+| `auth` | GoTrue (Authentication) | 9999 |
+| `rest` | PostgREST (REST API) | 3000 |
+| `realtime` | Realtime (WebSockets) | 4000 |
+| `storage` | Storage API | 5000 |
+| `imgproxy` | Image Transformation | 5001 |
+| `meta` | postgres-meta | 8080 |
+| `functions` | Edge Functions (Deno) | 9000 |
+| `db` | PostgreSQL 17 | 5432 |
+| `supavisor` | Connection Pooler | 6543 |
+
+---
+
+## 📚 Advanced Features
+
+| Feature | Description |
+|---------|-------------|
+| **Caddy Reverse Proxy + SSO** | Automatic TLS, GitHub/GitLab/Discord OAuth2, basic auth, IP allow lists |
+| **Monitoring Stack** | Grafana, Prometheus, Loki, Node Exporter, cAdvisor, Postgres Exporter |
+| **LUKS Encryption** | At-rest disk encryption for Postgres data |
+| **S3 Backups** | Automated cron-based backups to S3-compatible storage |
+| **Fail2ban** | Brute-force protection for PostgreSQL |
+| **UFW Firewall** | Fine-grained allow/deny rules |
+
+Full documentation: **[docs/advanced-docs.md](docs/advanced-docs.md)**
+
+---
+
+## 📄 License
+
+MIT
+
