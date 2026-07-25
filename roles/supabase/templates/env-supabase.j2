@@ -131,7 +131,7 @@ PGRST_DB_EXTRA_SEARCH_PATH=public
 # Equivalent to "Site URL" and "Redirect URLs" platform configuration options
 # Documentation: https://supabase.com/docs/guides/auth/redirect-urls
 SITE_URL={{ site_url }}
-ADDITIONAL_REDIRECT_URLS=
+ADDITIONAL_REDIRECT_URLS={{ additional_redirect_urls }}
 JWT_EXPIRY=3600
 DISABLE_SIGNUP=false
 API_EXTERNAL_URL={{ api_external_url }}
@@ -148,10 +148,10 @@ MAILER_SUBJECTS_CONFIRMATION="{% raw %}{{.Data.EmailTemplate.Confirmation.Title}
 MAILER_SUBJECTS_RECOVERY="{% raw %}{{.Data.EmailTemplate.Recovery.Title}}{% endraw %}"
 MAILER_SUBJECTS_EMAIL_CHANGE="{% raw %}{{.Data.EmailTemplate.EmailChange.Title}}{% endraw %}"
 
-MAILER_TEMPLATES_RECOVERY={{ api_external_url }}/storage/v1/object/public/templates/reset_password.html
-MAILER_TEMPLATES_CONFIRMATION={{ api_external_url }}/storage/v1/object/public/templates/email_confirmation.html
-MAILER_TEMPLATES_EMAIL_CHANGE={{ api_external_url }}/storage/v1/object/public/templates/email_change.html
-MAILER_TEMPLATES_INVITE={{ api_external_url }}/storage/v1/object/public/templates/email_invite.html
+MAILER_TEMPLATES_RECOVERY={{ mailer_templates_base_url }}/email-templates/recovery.html
+MAILER_TEMPLATES_CONFIRMATION={{ mailer_templates_base_url }}/email-templates/email_confirmation.html
+MAILER_TEMPLATES_EMAIL_CHANGE={{ mailer_templates_base_url }}/email-templates/email_change.html
+MAILER_TEMPLATES_INVITE={{ mailer_templates_base_url }}/email-templates/invite.html
 
 # Magic link expiry time # 300sec=5 minutes
 MAILER_OTP_EXP=300 

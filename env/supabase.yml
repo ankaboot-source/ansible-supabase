@@ -79,6 +79,8 @@ sb_jwt_jwks:
 
 site_url: https://app.example.com # Website url
 api_external_url: https://supa.example.com # For supabase studio # REQUIRED
+additional_redirect_urls: changeit # https://app.example.com/auth/callback
+mailer_templates_base_url: changeit # https://app.example.com
 
 ## Email auth
 enable_email_signup: true
