@@ -143,18 +143,18 @@ MAILER_URLPATHS_RECOVERY="/auth/v1/verify"
 MAILER_URLPATHS_EMAIL_CHANGE="/auth/v1/verify"
 
 # UPDATE THE MAILER PART ACCORDINGLY
-MAILER_SUBJECTS_INVITE="{% raw %}{{.Data.EmailTemplate.Invite.Title}}{% endraw %}"
-MAILER_SUBJECTS_CONFIRMATION="{% raw %}{{.Data.EmailTemplate.Confirmation.Title}}{% endraw %}"
-MAILER_SUBJECTS_RECOVERY="{% raw %}{{.Data.EmailTemplate.Recovery.Title}}{% endraw %}"
-MAILER_SUBJECTS_EMAIL_CHANGE="{% raw %}{{.Data.EmailTemplate.EmailChange.Title}}{% endraw %}"
+MAILER_SUBJECTS_INVITE="Votre invitation à m3llm"
+MAILER_SUBJECTS_CONFIRMATION="Confirmez votre email — m3llm"
+MAILER_SUBJECTS_RECOVERY="Réinitialisez votre mot de passe — m3llm"
+MAILER_SUBJECTS_EMAIL_CHANGE="Confirmez votre nouvel email — m3llm"
 
 MAILER_TEMPLATES_RECOVERY={{ mailer_templates_base_url }}/email-templates/recovery.html
 MAILER_TEMPLATES_CONFIRMATION={{ mailer_templates_base_url }}/email-templates/email_confirmation.html
 MAILER_TEMPLATES_EMAIL_CHANGE={{ mailer_templates_base_url }}/email-templates/email_change.html
 MAILER_TEMPLATES_INVITE={{ mailer_templates_base_url }}/email-templates/invite.html
 
-# Magic link expiry time # 300sec=5 minutes
-MAILER_OTP_EXP=300 
+# Magic link expiry time # 3600sec=1 hour
+MAILER_OTP_EXP=3600
 
 ## Password Check
 PASSWORD_MIN_LENGTH=12
