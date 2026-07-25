@@ -12,8 +12,8 @@
 The current installation flow is simple but **not deterministic** and **not friendly to first-time users**:
 
 1. Clone the repository.
-2. Edit `env/supabase.yml` (263 lines, ~40 `#REQUIRED` fields, many defaulting to the literal placeholder `changeit`).
-3. Run `sh generate-keys.sh` to fill in 10 cryptographic values.
+2. Edit `env/supabase.yml` (263 lines, 11 `#REQUIRED` comment markers — the README documents ~20 minimum-required fields across secrets, URLs, SMTP, and the system user — and 46 lines still defaulting to the literal placeholder `changeit`).
+3. Run `sh generate-keys.sh` to fill in 11 cryptographic values.
 4. Manually set the remaining required fields (`deploy_user`, `docker_users`, `site_url`, `api_external_url`, SMTP, and per-role SSO/S3/LUKS values).
 5. Run `sudo bash install.sh`.
 
