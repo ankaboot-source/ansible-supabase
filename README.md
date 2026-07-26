@@ -137,6 +137,7 @@ sudo ./install.sh -d
 | **S3 Backups** | Automated cron-based backups to S3-compatible storage |
 | **Fail2ban** | Brute-force protection for PostgreSQL |
 | **UFW Firewall** | Fine-grained allow/deny rules |
+| **Secure MCP Access** | MCP server restricted to localhost; authorized clients connect via SSH tunnel — no public exposure |
 
 Full documentation: **[docs/advanced-docs.md](docs/advanced-docs.md)**
 
