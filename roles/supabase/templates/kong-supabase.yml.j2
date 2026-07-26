@@ -401,17 +401,18 @@ services:
           status_code: 403
           message: "Access is forbidden."
 
-  ## MCP endpoint - secure local-only access (SSH tunnel)
-  # The /mcp route is restricted to localhost by default so the MCP
-  # server is never exposed to the public Internet. Authorized remote
-  # clients reach it through an SSH tunnel:
+  ## MCP endpoint - local access
+  # The /mcp route is blocked by default (request-termination 403) so the
+  # MCP server is never exposed to the public Internet. Authorized remote
+  # clients can reach it through an SSH tunnel:
   #   ssh -L 8080:localhost:8000 deploy_user@<server>
   # then point the MCP client at http://localhost:8080/mcp
-  # Override `mcp_allowed_ips` in env/supabase.yml to widen access
-  # (e.g. to a private VPN subnet), but keep it localhost-only for
-  # the default SSH-tunnel access pattern.
+  # To enable local access (danger zone!):
+  # 1. Comment out the 'request-termination' section below
+  # 2. Uncomment the 'ip-restriction' section, including 'deny'
+  # 3. Add your local IPs to the 'allow' list (mcp_allowed_ips)
   - name: mcp
-    _comment: 'MCP: /mcp -> http://studio:3000/api/mcp (localhost-only via SSH tunnel)'
+    _comment: 'MCP: /mcp -> http://studio:3000/api/mcp (local access)'
     url: http://studio:3000/api/mcp
     routes:
       - name: mcp
@@ -419,13 +420,22 @@ services:
         paths:
           - /mcp
     plugins:
-      - name: ip-restriction
+      # Block access to /mcp by default
+      - name: request-termination
         config:
-          allow:
-            {%- for ip in mcp_allowed_ips %}
-            - {{ ip }}
-            {%- endfor %}
-          deny: []
+          status_code: 403
+          message: "Access is forbidden."
+      # Enable local access (danger zone!)
+      # 1. Comment out the 'request-termination' section above
+      # 2. Uncomment the entire section below, including 'deny'
+      # 3. Add your local IPs to the 'allow' list
+      #- name: cors
+      #- name: ip-restriction
+      #  config:
+      #    allow:
+      #      - 127.0.0.1
+      #      - ::1
+      #    deny: []
 
 
   ## Protected Dashboard - catch all remaining routes
