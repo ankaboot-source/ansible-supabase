@@ -49,6 +49,19 @@ GRAFANA_SMTP_SENDER: user@example.com
 supabase_path: supabase/docker
 kong_conf_path: volumes/api
 
+# MCP (Model Context Protocol) secure access.
+# The /mcp Kong route is restricted to these IPs. Keep localhost-only so the
+# MCP server is never exposed publicly; authorized remote clients connect via
+# SSH tunnel (see docs/advanced-docs.md -> "Secure MCP Remote Access").
+# To allow a private VPN subnet instead, e.g.:
+#   mcp_allowed_ips:
+#     - 127.0.0.1
+#     - ::1
+#     - 10.0.0.0/24
+mcp_allowed_ips:
+  - 127.0.0.1
+  - ::1
+
 postgres_db_pwd: changeit # REQUIRED
 
 #### Refer to https://supabase.com/docs/guides/self-hosting/docker to generate jwt, anon and service role keys
