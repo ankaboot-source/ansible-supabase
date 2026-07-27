@@ -224,6 +224,30 @@ else
   python3 -c "import yaml; yaml.safe_load(open('$d/env/supabase.yml'))" 2>&1 | tail -5
 fi
 
+# ─── TC-SETUP-015: Enable monitor component with custom domain ─────────────────
+echo "TC-SETUP-015: enable monitor component with custom domain"
+d="$(make_sandbox tc015)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+sed -i 's|monitor: false|monitor: true|' "$d/config.yml"
+sed -i 's|domain: monitor.example.com|domain: monitor.myapp.com|' "$d/config.yml"
+sed -i 's|grafana_root_url: https://monitor.example.com|grafana_root_url: https://monitor.myapp.com|' "$d/config.yml"
+sed -i 's|grafana_alert_host: monitor.example.com|grafana_alert_host: monitor.myapp.com|' "$d/config.yml"
+run_setup_rc "$d" --yes
+if [[ $RC -eq 0 ]]; then
+  if grep -q 'domain: "monitor.myapp.com"' "$d/env/supabase.yml" \
+    && grep -q 'GRAFANA_ALERT_HOST: monitor.myapp.com' "$d/env/supabase.yml" \
+    && grep -q 'GRAFANA_SERVER_ROOT_URL: https://monitor.myapp.com' "$d/env/supabase.yml"; then
+    ok "monitor domain and grafana settings written to env/supabase.yml"
+  else
+    fail "monitor domain or grafana settings not found in env/supabase.yml"
+    grep -n -i monitor "$d/env/supabase.yml"
+  fi
+else
+  fail "setup.sh failed with monitor enabled (rc=$RC)"
+  echo "$OUT" | tail -20
+fi
+
 # ─── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

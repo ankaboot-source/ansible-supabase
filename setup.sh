@@ -352,6 +352,24 @@ fi
 if cfg_bool "components.monitor"; then
   set_env_var "GRAFANA_SERVER_ROOT_URL" "$(cfg_get "advanced.monitor.grafana_root_url")"
   set_env_var "GRAFANA_ALERT_HOST"      "$(cfg_get "advanced.monitor.grafana_alert_host")"
+
+  # monitor domain (inside projects.monitor.domain)
+  python3 - "$ENV_FILE" "$(cfg_get "advanced.monitor.domain")" <<'PYEOF'
+import sys, re
+path, domain = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    content = f.read()
+content = re.sub(
+    r'(\nprojects:.*?\n  monitor:.*?\n    domain:\s*)"[^"]*"',
+    r'\1"%s"' % domain,
+    content,
+    count=1,
+    flags=re.DOTALL,
+)
+with open(path, 'w') as f:
+    f.write(content)
+PYEOF
+
   if cfg_bool "advanced.monitor.anonymous_enabled"; then
     set_env_var "GRAFANA_AUTH_ANONYMOUS_ENABLED" "true"
   else
