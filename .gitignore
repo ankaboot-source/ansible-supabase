@@ -1,0 +1,14 @@
+# Git worktrees for isolated development
+.worktrees/
+
+# Local environment overrides
+.env.local
+
+# Ansible retry files
+*.retry
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+*~

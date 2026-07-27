@@ -20,6 +20,7 @@ This document covers all optional roles and advanced configuration beyond the mi
 - [S3 Backups](#s3-backups)
 - [Fail2ban](#fail2ban)
 - [UFW Firewall](#ufw-firewall)
+- [Secure MCP Remote Access](#secure-mcp-remote-access)
 - [Customizing Supabase](#customizing-supabase)
 - [Full Environment Variable Reference](#full-environment-variable-reference)
 
@@ -368,6 +369,84 @@ firewall_deny:
 
 ---
 
+## Secure MCP Remote Access
+
+The Supabase MCP (Model Context Protocol) server exposes the Studio API at
+`/mcp` through the Kong gateway. By default this endpoint is **restricted to
+localhost** so it is never reachable from the public Internet. Authorized
+remote clients connect through an SSH tunnel, which reuses the existing SSH
+access (port 22) and requires no new public ports, subdomains, or services.
+
+### How it works
+
+```
+MCP client (local) ──SSH tunnel (port 22)──> server ──> Kong :8000/mcp ──> Studio :3000/api/mcp
+```
+
+- **Kong** applies an `ip-restriction` plugin to `/mcp` that only allows
+  `127.0.0.1` and `::1` (configurable via `mcp_allowed_ips`).
+- **UFW** denies port `8000` (Kong) from external IPs by default.
+- **Caddy** never reverse-proxies `/mcp` — there is no public subdomain for it.
+- The direct `/api/mcp` path stays fully blocked (`request-termination` 403).
+
+### Connecting an authorized client
+
+From your workstation, open an SSH local port forward to Kong:
+
+```bash
+ssh -L 8080:localhost:8000 deploy_user@sb.example.com -N
+```
+
+- `-L 8080:localhost:8000` forwards your local port `8080` to the server's
+  `localhost:8000` (Kong).
+- `-N` keeps the SSH session open without running a remote shell.
+
+Then point your MCP client at:
+
+```
+http://localhost:8080/mcp
+```
+
+Close the tunnel with `Ctrl-C` (or by exiting the SSH session) when finished.
+
+### Configuration
+
+The allow list is controlled by `mcp_allowed_ips` in `env/supabase.yml`:
+
+```yaml
+# Default: localhost-only (SSH tunnel access)
+mcp_allowed_ips:
+  - 127.0.0.1
+  - ::1
+```
+
+To allow a private VPN subnet (e.g. WireGuard) in addition to localhost:
+
+```yaml
+mcp_allowed_ips:
+  - 127.0.0.1
+  - ::1
+  - 10.0.0.0/24
+```
+
+> **Warning:** Adding a public IP or `0.0.0.0/0` re-exposes the MCP endpoint to
+> the Internet and defeats the purpose of this security control. Keep the allow
+> list limited to localhost and private ranges.
+
+### Why SSH tunneling?
+
+| Approach | Public exposure | Extra services | Auth model |
+|----------|----------------|----------------|------------|
+| **SSH tunnel (default)** | None | None | SSH keys (existing) |
+| VPN (WireGuard/Tailscale) | None | VPN daemon + config | VPN keys |
+| Caddy + OAuth2 SSO | Public subdomain | Caddy + OIDC provider | Interactive login |
+| Public Kong + IP allow list | Public port | None | IP only (spoofable) |
+
+SSH tunneling is the default because it adds no new attack surface, reuses the
+existing SSH trust boundary, and requires no additional infrastructure.
+
+---
+
 ## Customizing Supabase
 
 ### Disabling Unused Services
@@ -455,6 +534,7 @@ All values go in `env/supabase.yml`.
 | `openai_api_key` | No | OpenAI API key |
 | `supabase_path` | No | Relative path for Supabase docker dir |
 | `kong_conf_path` | No | Relative path for Kong config |
+| `mcp_allowed_ips` | No | IPs allowed to reach `/mcp` via Kong (default: `[127.0.0.1, ::1]` — localhost only for SSH-tunnel access; see [Secure MCP Remote Access](#secure-mcp-remote-access)) |
 
 ### CADDY
 
