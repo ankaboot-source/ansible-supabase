@@ -2,9 +2,9 @@ name: Trigger Supabase stack deployment [leadminer]
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+  release:
+    types: [published]
+
 permissions: {}
 jobs:
   trigger:
