@@ -143,6 +143,60 @@ Full documentation: **[docs/advanced-docs.md](docs/advanced-docs.md)**
 
 ---
 
+## 🚚 Migration from Supabase Cloud
+
+Once your self-hosted stack is running, you can migrate an existing Supabase
+Cloud project into it with a single command. The `migrate.sh` script is a
+**Layer 1 walking skeleton**: it migrates schema + data, auth users (UUIDs
+preserved), and storage objects, then prints a checklist of the manual steps
+that remain.
+
+### What migrates automatically
+
+- **Database schema + data** — `pg_dump`/`pg_restore` across Supabase-managed
+  schemas (`public`, `auth`, `storage`, `_realtime`, `graphql_public`,
+  `extensions`, `pgsodium`). Missing schemas are skipped with a warning.
+- **Auth users** — `auth.users` and `auth.identities` migrated with UUIDs
+  preserved. Password hashes migrate, so existing passwords still work; users
+  must log in again (sessions are not migrated).
+- **Storage objects** — copied via `rclone` from the Cloud S3 endpoint to your
+  self-hosted storage (read-only against the source).
+
+### What stays manual (printed at the end)
+
+Auth configuration, Edge Functions, cron jobs, webhooks, storage bucket
+configuration, and client env-var updates. The script prints a fixed checklist
+at the end — migration is incomplete but never silently incomplete.
+
+### Usage
+
+```bash
+# 1. Copy the example config and edit it
+cp env/migrate.example.yml env/migrate.yml
+# Edit env/migrate.yml: fill in the SOURCE (Cloud) and TARGET (self-hosted) sections
+
+# 2. Preview the migration plan (no changes made)
+./migrate.sh --config env/migrate.yml --dry-run
+
+# 3. Run the migration (non-interactive, for CI/automation)
+./migrate.sh --config env/migrate.yml --yes
+```
+
+### Invariants
+
+- **Read-only against the source.** Always. The script uses `pg_dump`
+  (inherently read-only) and `rclone copy` (not `sync`/`move`), and refuses to
+  run if `source.db_url == target.db_url`.
+- **Refuses a non-empty target.** Layer 1 migrates into a fresh instance only.
+- **No resumability.** A failure means starting over.
+- **Runs with no TTY.** `--yes` gates all prompts; colors auto-disable.
+
+See [docs/designs/migration-layer-1.md](docs/designs/migration-layer-1.md) for
+the full design and [docs/test-cases/migration-layer-1.md](docs/test-cases/migration-layer-1.md)
+for the test matrix.
+
+---
+
 ## 📄 License
 
 MIT
