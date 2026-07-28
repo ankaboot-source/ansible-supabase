@@ -377,19 +377,22 @@ else
 fi
 
 # ─── TC-MIG-020: pg_restore targets the target DSN only ───────────────────────
-echo "TC-MIG-020: pg_restore targets the target DSN only"
+echo "TC-MIG-020: pg_restore targets the target DSN only (via --dbname=)"
 d="$(make_sandbox tc020)"
 cp "$d/env/migrate.example.yml" "$d/env/migrate.yml"
 fill_required "$d"
 run_migrate_rc "$d" --config "$d/env/migrate.yml" --yes
 tgt_dsn="localhost:5432"
 src_dsn="db.testprojref12345.supabase.co"
+# Strengthened per review (H1): assert the DSN is passed via --dbname= (the
+# correct pg_restore connection option), NOT as a bare positional filename.
+# pg_restore's positional arg is the archive FILE; the DSN must go via --dbname=.
 if [[ -f "$d/stub-bin/pg_restore.calls" ]] \
-  && grep -q "$tgt_dsn" "$d/stub-bin/pg_restore.calls" \
+  && grep -q "ARG --dbname=postgresql://postgres:postgres@${tgt_dsn}/postgres" "$d/stub-bin/pg_restore.calls" \
   && ! grep -q "$src_dsn" "$d/stub-bin/pg_restore.calls"; then
-  ok "pg_restore targets target DSN, never source"
+  ok "pg_restore targets target DSN via --dbname=, never source"
 else
-  fail "pg_restore DSN targeting wrong"
+  fail "pg_restore DSN not passed via --dbname= or targets source"
 fi
 
 # ─── Summary ───────────────────────────────────────────────────────────────────

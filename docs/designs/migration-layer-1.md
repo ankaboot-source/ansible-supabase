@@ -139,20 +139,19 @@ Phase 0: Preflight
   └─ if --dry-run: print plan and exit 0
 
 Phase 1: Database — schema + data
-  ├─ pg_dump source (full, custom format, includes extensions + roles)
-  │     flags: --format=custom --no-owner --no-privileges --clean --if-exists
-  │     + --section=pre-data --section=post-data --section=data
+  ├─ pg_dump source (per-schema, custom format)
+  │     flags: --format=custom --no-owner --no-privileges --schema=<name>
   │     + --schema=public --schema=auth --schema=storage --schema=_realtime
   │       --schema=graphql_public --schema=extensions --schema=pgsodium
   │       (best-effort: missing schemas are skipped with a warning, not fatal)
-  ├─ stream into pg_restore target
-  │     flags: --no-owner --no-privileges --clean --if-exists
-  │     + --exit-on-error for the pre-data section only
-  └─ on failure: die() with the failing command + tail of the log
+  ├─ pg_restore into target (DSN via --dbname=, archive file as positional)
+  │     flags: --dbname=<target_dsn> --no-owner --no-privileges
+  │            --clean --if-exists --exit-on-error
+  └─ on failure: warn() + add to runtime notes (non-fatal per schema)
 
 Phase 2: Auth users (UUIDs preserved)
   ├─ pg_dump auth.users auth.identities from source (data-only, INSERT copy)
-  ├─ pg_restore into target
+  ├─ pg_restore into target (DSN via --dbname=, archive file as positional)
   └─ NOTE: users must log in again (password hashes migrate, but sessions do not)
 
 Phase 3: Storage objects (rclone copy)
@@ -172,9 +171,9 @@ Phase 4: Manual-steps report
 - `rclone copy` (not `sync`, not `move`) — source is never mutated.
 - A preflight assertion `source.db_url != target.db_url` prevents the catastrophic
   case of pointing both ends at the same database.
-- The script never issues `psql -c "..."` against the source for any write
-  statement; the only `psql` calls against source are read-only `SELECT count(*)`
-  preflight probes.
+- The script never issues `psql` against the source at all — the only `psql`
+  calls are read-only `SELECT count(*)` preflight probes against the **target**
+  (to verify it is empty). The source is touched only by `pg_dump` (read-only).
 
 ### Non-empty-target refusal
 

@@ -190,6 +190,20 @@ ok "All required binaries found."
 RUNTIME_NOTES=()
 add_note() { RUNTIME_NOTES+=("$1"); }
 
+# ─── Temp files + cleanup ────────────────────────────────────────────────────
+# Single LOG_DIR for all error logs (avoids /tmp collisions on concurrent runs).
+# Temp dump/config files are declared empty here so cleanup() is safe even if
+# the script exits before they are created.
+LOG_DIR="$(mktemp -d -t migrate-logs-XXXXXX)"
+DUMP_FILE=""
+AUTH_DUMP=""
+RCLONE_CONF=""
+cleanup() {
+  rm -f "$DUMP_FILE" "$AUTH_DUMP" "$RCLONE_CONF"
+  rm -rf "$LOG_DIR"
+}
+trap cleanup EXIT
+
 # ─── Dry-run: print plan and exit ─────────────────────────────────────────────
 if [[ $DRY_RUN -eq 1 ]]; then
   log "DRY RUN — no files will be modified, no commands will execute."
@@ -217,10 +231,20 @@ fi
 log "Checking target is empty…"
 
 # Count base tables in public schema (target only — read-only probe).
-tgt_public_tables=$("$PSQL" "$TGT_DB_URL" -tAX \
-  -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';" 2>/dev/null || echo "0")
-tgt_auth_users=$("$PSQL" "$TGT_DB_URL" -tAX \
-  -c "SELECT count(*) FROM auth.users;" 2>/dev/null || echo "0")
+# A connection failure to the target must NOT be masked as "empty" — die with
+# the real psql error so the operator fixes the DSN before any restore runs.
+if ! tgt_public_tables=$("$PSQL" "$TGT_DB_URL" -tAX \
+  -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';" 2>"$LOG_DIR/psql-public.err"); then
+  die "cannot reach target database (public-tables probe failed).
+  Verify target.db_url is correct and the database is running.
+  psql error: $(cat "$LOG_DIR/psql-public.err")"
+fi
+if ! tgt_auth_users=$("$PSQL" "$TGT_DB_URL" -tAX \
+  -c "SELECT count(*) FROM auth.users;" 2>"$LOG_DIR/psql-auth.err"); then
+  die "cannot reach target database (auth.users probe failed).
+  Verify target.db_url is correct and the database is running.
+  psql error: $(cat "$LOG_DIR/psql-auth.err")"
+fi
 
 reasons=()
 [[ "${tgt_public_tables:-0}" -gt 0 ]] && reasons+=("${tgt_public_tables} base table(s) in schema 'public'")
@@ -240,7 +264,6 @@ log "Phase 1: dumping and restoring schema + data…"
 SCHEMAS=(public auth storage _realtime graphql_public extensions pgsodium)
 
 DUMP_FILE="$(mktemp -t migrate-dump-XXXXXX.dump)"
-trap 'rm -f "$DUMP_FILE"' EXIT
 
 # Build --schema= flags. pg_dump fails if a schema doesn't exist; we dump each
 # schema separately so a missing one is skipped with a warning, not fatal.
@@ -250,20 +273,23 @@ for schema in "${SCHEMAS[@]}"; do
         --format=custom \
         --no-owner --no-privileges \
         --schema="$schema" \
-        --file="$DUMP_FILE" 2>/tmp/migrate-pgdump.err; then
+        --file="$DUMP_FILE" 2>"$LOG_DIR/pgdump-$schema.err"; then
     warn "skipping schema '$schema' (not present in source or dump failed)"
     add_note "Skipped schema '$schema' (not present in source or pg_dump failed)."
     continue
   fi
   log "  restoring schema: $schema"
-  if ! "$PG_RESTORE" "$TGT_DB_URL" \
+  # pg_restore's positional arg is the archive FILE, not a DSN. Pass the target
+  # DSN via --dbname= (which accepts a libpq conninfo URI). This is the fix for
+  # the critical bug where the DSN was passed as the filename positional.
+  if ! "$PG_RESTORE" \
+        --dbname="$TGT_DB_URL" \
         --no-owner --no-privileges \
         --clean --if-exists \
-        --dbname=postgres \
         --exit-on-error \
-        "$DUMP_FILE" 2>/tmp/migrate-pgrestore.err; then
-    warn "restore of schema '$schema' failed — see /tmp/migrate-pgrestore.err"
-    add_note "Restore of schema '$schema' failed. See /tmp/migrate-pgrestore.err."
+        "$DUMP_FILE" 2>"$LOG_DIR/pgrestore-$schema.err"; then
+    warn "restore of schema '$schema' failed — see $LOG_DIR/pgrestore-$schema.err"
+    add_note "Restore of schema '$schema' failed. See $LOG_DIR/pgrestore-$schema.err."
   fi
   rm -f "$DUMP_FILE"
 done
@@ -281,18 +307,19 @@ if "$PG_DUMP" "$SRC_DB_URL" \
       --data-only \
       --table="auth.users" \
       --table="auth.identities" \
-      --file="$AUTH_DUMP" 2>/tmp/migrate-auth-dump.err; then
-  "$PG_RESTORE" "$TGT_DB_URL" \
+      --file="$AUTH_DUMP" 2>"$LOG_DIR/auth-dump.err"; then
+  # pg_restore: DSN via --dbname=, archive file as the sole positional (see Phase 1).
+  "$PG_RESTORE" \
+    --dbname="$TGT_DB_URL" \
     --no-owner --no-privileges \
     --data-only \
-    --dbname=postgres \
     --exit-on-error \
-    "$AUTH_DUMP" 2>/tmp/migrate-auth-restore.err \
-    || { warn "auth.users restore failed — see /tmp/migrate-auth-restore.err"; add_note "auth.users restore failed. See /tmp/migrate-auth-restore.err."; }
+    "$AUTH_DUMP" 2>"$LOG_DIR/auth-restore.err" \
+    || { warn "auth.users restore failed — see $LOG_DIR/auth-restore.err"; add_note "auth.users restore failed. See $LOG_DIR/auth-restore.err."; }
   ok "Phase 2 complete (auth users migrated with UUIDs preserved)."
 else
-  warn "auth.users dump failed — see /tmp/migrate-auth-dump.err"
-  add_note "auth.users dump failed. See /tmp/migrate-auth-dump.err. Users must be re-created manually."
+  warn "auth.users dump failed — see $LOG_DIR/auth-dump.err"
+  add_note "auth.users dump failed. See $LOG_DIR/auth-dump.err. Users must be re-created manually."
 fi
 rm -f "$AUTH_DUMP"
 
@@ -310,7 +337,6 @@ TGT_STORAGE_REGION="$(cfg_get "target.storage_region")"
 
 # Build ephemeral rclone config. rclone reads config from a file via --config.
 RCLONE_CONF="$(mktemp -t migrate-rclone-XXXXXX.conf)"
-trap 'rm -f "$DUMP_FILE" "$AUTH_DUMP" "$RCLONE_CONF"' EXIT
 cat > "$RCLONE_CONF" <<EOF
 [src]
 type = s3
@@ -332,11 +358,11 @@ EOF
 # rclone copy (NOT sync, NOT move) — source is never mutated.
 # --progress=no keeps output TTY-free (runs with no TTY attached).
 if "$RCLONE" --config "$RCLONE_CONF" copy src: tgt: \
-     --progress=no 2>/tmp/migrate-rclone.err; then
+     --progress=no 2>"$LOG_DIR/rclone.err"; then
   ok "Phase 3 complete (storage objects copied)."
 else
-  warn "storage copy failed — see /tmp/migrate-rclone.err (best-effort at this layer)"
-  add_note "Storage copy failed. See /tmp/migrate-rclone.err. Re-run rclone manually after fixing the config."
+  warn "storage copy failed — see $LOG_DIR/rclone.err (best-effort at this layer)"
+  add_note "Storage copy failed. See $LOG_DIR/rclone.err. Re-run rclone manually after fixing the config."
 fi
 
 # ─── Phase 4: Manual-steps report ────────────────────────────────────────────
