@@ -333,18 +333,25 @@ if cfg_bool "components.caddy"; then
     github)
       set_env_var "github_oauth_client_id"     "$(cfg_get "advanced.caddy.sso_client_id")"
       set_env_var "github_oauth_client_secret" "$(cfg_get "advanced.caddy.sso_client_secret")"
+      allow_list="$(cfg_get "advanced.caddy.sso_allow_list")"
+      [[ -n "$allow_list" ]] && set_env_var "github_allow_list" "$allow_list"
       ;;
     gitlab)
       set_env_var "gitlab_oauth_client_id"     "$(cfg_get "advanced.caddy.sso_client_id")"
       set_env_var "gitlab_oauth_client_secret" "$(cfg_get "advanced.caddy.sso_client_secret")"
+      allow_list="$(cfg_get "advanced.caddy.sso_allow_list")"
+      [[ -n "$allow_list" ]] && set_env_var "gitlab_allow_list" "$allow_list"
       ;;
     discord)
       set_env_var "discord_oauth_client_id"    "$(cfg_get "advanced.caddy.sso_client_id")"
       set_env_var "discord_oauth_client_secret" "$(cfg_get "advanced.caddy.sso_client_secret")"
+      # no allow list — Discord uses role-based auth (admin_role_id + discord_guild_id)
       ;;
     Generic)
       set_env_var "oidc_client_id"             "$(cfg_get "advanced.caddy.sso_client_id")"
       set_env_var "oidc_client_secret"         "$(cfg_get "advanced.caddy.sso_client_secret")"
+      allow_list="$(cfg_get "advanced.caddy.sso_allow_list")"
+      [[ -n "$allow_list" ]] && set_env_var "generic_allow_list" "$allow_list"
       ;;
   esac
 fi
