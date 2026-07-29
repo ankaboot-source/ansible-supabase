@@ -211,7 +211,7 @@ if [[ $DRY_RUN -eq 1 ]]; then
   log "  Phase 1: pg_dump source → pg_restore target (schema + data)"
   log "    source DSN: ${SRC_DB_URL}"
   log "    target DSN: ${TGT_DB_URL}"
-  log "    schemas: public auth storage _realtime graphql_public extensions pgsodium (best-effort)"
+  log "    schemas: auto-discovered (all non-system schemas)"
   log "  Phase 2: pg_dump auth.users + auth.identities → pg_restore target (UUIDs preserved)"
   log "  Phase 3: rclone copy source-storage → target-storage (read-only against source)"
   log "  Phase 4: print manual-steps report"
@@ -259,40 +259,40 @@ ok "Target is empty."
 # ─── Phase 1: Database — schema + data ────────────────────────────────────────
 log "Phase 1: dumping and restoring schema + data…"
 
-# Supabase-managed schemas to carry across. Missing schemas are skipped with a
-# warning (best-effort), not fatal — a Cloud project may not have all of them.
-SCHEMAS=(public auth storage _realtime graphql_public extensions pgsodium)
+# Probe source for all schemas, excluding only Postgres built-in + temporary
+# system schemas (pg_temp_N, pg_toast_temp_N). Supabase system schemas like
+# auth, storage, realtime, extensions, etc. ARE included — their DDL produces
+# harmless "already exists" errors on the target, but their data comes across.
+log "  probing source schemas…"
+source_schemas=$("$PSQL" "$SRC_DB_URL" -tAX \
+  -c "SELECT schema_name FROM information_schema.schemata
+      WHERE schema_name NOT IN ('pg_catalog','information_schema','pg_toast')
+        AND schema_name NOT LIKE 'pg\_temp\_%'
+        AND schema_name NOT LIKE 'pg\_toast\_temp\_%'
+      ORDER BY schema_name;" 2>"$LOG_DIR/probe.err") \
+  || die "cannot reach source database (probe failed)."
+
+SCHEMA_FLAGS=()
+while IFS= read -r s; do
+  [[ -n "$s" ]] && SCHEMA_FLAGS+=(--schema="$s")
+done <<< "$source_schemas"
+
+[[ ${#SCHEMA_FLAGS[@]} -eq 0 ]] && die "no schemas found on source — nothing to migrate."
+log "  schemas to migrate: ${SCHEMA_FLAGS[*]}"
 
 DUMP_FILE="$(mktemp -t migrate-dump-XXXXXX.dump)"
+log "  dumping database…"
+"$PG_DUMP" "$SRC_DB_URL" --format=custom --no-owner --no-privileges \
+  "${SCHEMA_FLAGS[@]}" --file="$DUMP_FILE" 2>"$LOG_DIR/dump.err" \
+  || die "pg_dump failed. See $LOG_DIR/dump.err."
 
-# Build --schema= flags. pg_dump fails if a schema doesn't exist; we dump each
-# schema separately so a missing one is skipped with a warning, not fatal.
-for schema in "${SCHEMAS[@]}"; do
-  log "  dumping schema: $schema"
-  if ! "$PG_DUMP" "$SRC_DB_URL" \
-        --format=custom \
-        --no-owner --no-privileges \
-        --schema="$schema" \
-        --file="$DUMP_FILE" 2>"$LOG_DIR/pgdump-$schema.err"; then
-    warn "skipping schema '$schema' (not present in source or dump failed)"
-    add_note "Skipped schema '$schema' (not present in source or pg_dump failed)."
-    continue
-  fi
-  log "  restoring schema: $schema"
-  # pg_restore's positional arg is the archive FILE, not a DSN. Pass the target
-  # DSN via --dbname= (which accepts a libpq conninfo URI). This is the fix for
-  # the critical bug where the DSN was passed as the filename positional.
-  if ! "$PG_RESTORE" \
-        --dbname="$TGT_DB_URL" \
-        --no-owner --no-privileges \
-        --clean --if-exists \
-        --exit-on-error \
-        "$DUMP_FILE" 2>"$LOG_DIR/pgrestore-$schema.err"; then
-    warn "restore of schema '$schema' failed — see $LOG_DIR/pgrestore-$schema.err"
-    add_note "Restore of schema '$schema' failed. See $LOG_DIR/pgrestore-$schema.err."
-  fi
-  rm -f "$DUMP_FILE"
-done
+log "  restoring all schemas…"
+if ! "$PG_RESTORE" --dbname="$TGT_DB_URL" --no-owner --no-privileges \
+     "$DUMP_FILE" 2>"$LOG_DIR/restore.err"; then
+  warn "restore had errors — see $LOG_DIR/restore.err"
+  add_note "Restore had errors. See $LOG_DIR/restore.err."
+fi
+rm -f "$DUMP_FILE"
 ok "Phase 1 complete (schema + data)."
 
 # ─── Phase 2: Auth users (UUIDs preserved) ───────────────────────────────────
