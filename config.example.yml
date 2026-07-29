@@ -96,6 +96,9 @@ advanced:
     # See docs/advanced-docs.md for per-provider fields.
     sso_client_id: changeit
     sso_client_secret: changeit
+    # SSO allow list — space-separated usernames/emails granted admin access.
+    # Only used by github, gitlab, and generic providers (discord uses role-based auth).
+    sso_allow_list: "user1@gmail.com user2@gmail.com"
 
   # ── Monitor / Grafana ── (only if components.monitor: true)
   monitor:
