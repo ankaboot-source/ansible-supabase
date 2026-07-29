@@ -117,6 +117,15 @@
     group: root
   with_items:
     - { src: "Caddyfile-{{ SSO_PROVIDER }}", dest: "/etc/caddy/Caddyfile", mode: '0644' }
+  notify: Reload Caddy
 
 - name: fmt Caddy conf
   ansible.builtin.command: caddy fmt /etc/caddy/Caddyfile --overwrite
+  notify: Reload Caddy
+
+- name: Enable and start Caddy
+  become: true
+  ansible.builtin.systemd:
+    name: caddy
+    state: started
+    enabled: yes
