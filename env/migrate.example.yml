@@ -1,14 +1,17 @@
 # =============================================================================
-# migrate.example.yml — Migration configuration (Layer 1)
+# migrate.example.yml — Migration configuration
 # =============================================================================
 # Copy this file to env/migrate.yml and edit it:
 #   cp env/migrate.example.yml env/migrate.yml
 #   # edit env/migrate.yml, then run:
 #   ./migrate.sh --config env/migrate.yml --yes
 #
-# INVARIANT: this script is READ-ONLY against the source project. It never
-# writes to the source. It refuses to run if source and target point at the
-# same database, and it refuses to run against a non-empty target.
+# IMPORTANT: target.db_url MUST use supabase_admin (superuser that owns
+# auth/storage schemas). The default postgres user lacks the privileges to
+# restore auth/storage DDL.
+#
+# INVARIANT: the script is READ-ONLY against the source project. It never
+# writes to the source.
 #
 # Sections:
 #   SOURCE   — The Supabase Cloud project you are migrating FROM.
@@ -25,39 +28,39 @@ source:
 
   # Direct Postgres connection string to the Cloud project.
   # Use the pooler DSN (port 6543 for transaction mode, 5432 for session mode).
-  # The script opens this READ-ONLY (pg_dump never writes).
   db_url: changeit                 # postgresql://postgres.[ref]:[pwd]@db.[ref].supabase.co:6543/postgres
 
   # S3-compatible storage endpoint credentials (Supabase Cloud S3 API).
-  # Found in Dashboard → Settings → Storage.
-  storage_endpoint: changeit       # https://[ref].supabase.co/storage/v1
+  storage_endpoint: changeit       # https://[ref].storage.supabase.co/storage/v1/s3
   storage_access_key: changeit
   storage_secret_key: changeit
   storage_region: changeit         # e.g. us-east-1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TARGET — Self-hosted Supabase instance (this repo's stack)
+# TARGET — Self-hosted Supabase instance
 # ─────────────────────────────────────────────────────────────────────────────
 target:
-  # Self-hosted Postgres DSN. Default matches the local docker-compose service
-  # name + the default password from env/supabase.yml. Adjust to match your
-  # env/supabase.yml postgres_db_pwd if you changed it.
-  db_url: postgresql://postgres:postgres@localhost:5432/postgres
+  # IMPORTANT: Connect as supabase_admin (superuser), NOT postgres.
+  # The supabase_admin password is in your Supabase .env file under
+  # SUPABASE_ADMIN_PASSWORD (or SUPABASE_AUTH_EXTERNAL_SUPABASE_ADMIN_PASSWORD).
+  #
+  # For a local Docker instance:
+  #   db_url: postgresql://supabase_admin:<password>@localhost:5432/postgres
+  db_url: changeit
 
   # Self-hosted storage endpoint (Kong /storage/v1 on the API port).
-  storage_endpoint: http://localhost:8000/storage/v1
+  storage_endpoint: http://localhost:8000/storage/v1/s3
   # These come from env/supabase.yml:
   #   s3_protocol_access_key_id / s3_protocol_access_key_secret
   storage_access_key: changeit
   storage_secret_key: changeit
-  storage_region: us-east-1
+  storage_region: local
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TOOLS — Required binaries (defaults resolve via PATH)
 # ─────────────────────────────────────────────────────────────────────────────
-# Override only if a binary is installed outside PATH.
 tools:
   pg_dump: pg_dump
   pg_restore: pg_restore

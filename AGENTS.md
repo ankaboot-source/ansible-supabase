@@ -70,3 +70,32 @@ When adding a new variable that users should configure in `config.yml`:
 - `cfg_get "path.to.key"` — reads from `config.yml` via embedded Python YAML parser
 - `cfg_bool "path.to.key"` — returns 0 if `true`, 1 otherwise
 - `set_env_var "key" "value"` — writes `key: value` to `env/supabase.yml` via `sed -i`
+
+## Migration Script (`migrate.sh`)
+
+Migrates a Supabase Cloud project into a self-hosted instance. Lives at `migrate.sh` with config at `env/migrate.yml` (copy of `env/migrate.example.yml`).
+
+### Architecture
+Four phases run sequentially:
+1. **DB dump+restore** — probes all schemas from source, dumps them in a single `pg_dump`, restores in a single `pg_restore`
+2. **Auth users** — data-only dump of `auth.users` + `auth.identities` (preserves UUIDs)
+3. **Storage objects** — `rclone copy` from source S3 to target S3 (best-effort)
+4. **Manual steps report** — prints checklist for post-migration tasks
+
+### Key Difficulty: Cross-Schema Dependencies (Triggers)
+**Problem:** The original per-schema loop (`for schema in ...; do pg_dump --schema=$s; pg_restore; done`) dumped/restored schemas one at a time. Triggers on `public` tables referencing `auth.*` functions failed because `auth` wasn't restored yet when `public` ran. The `--exit-on-error` flag caused those trigger failures to abort the schema restore, so triggers were silently lost.
+
+**Fix:** Replace per-schema loop with a single `pg_dump` (all `--schema=` flags) followed by a single `pg_restore`. pg_dump resolves inter-schema dependency ordering internally, so triggers are created in the correct order. Removed `--exit-on-error` (harmless "already exists" DDL errors) and `--clean --if-exists` (target is fresh, cascade-drop not needed).
+
+### Key Difficulty: Schema Discovery
+**Problem:** The original script hardcoded a schema list (`SCHEMAS=(public auth storage ...)`). This missed custom schemas like `private`, `supabase_migrations`, and required manual updates when new schemas were added.
+
+**Fix:** Probe `information_schema.schemata` dynamically, excluding only Postgres built-in schemas (`pg_catalog`, `information_schema`, `pg_toast`) and temporary schemas (`pg_temp_%`, `pg_toast_temp_%`). All remaining schemas (user + Supabase system) are dumped — Supabase system schema DDL produces harmless "already exists" errors, but their data (auth users, storage metadata, etc.) is migrated.
+
+### Key Difficulty: Temporary Cloud Schemas
+**Problem:** Supabase Cloud Postgres creates ephemeral `pg_temp_N` and `pg_toast_temp_N` schemas for connection pooling. These have reserved `pg_` prefix names that fail on restore with "unacceptable schema name".
+
+**Fix:** Added `NOT LIKE 'pg\_temp\_%'` and `NOT LIKE 'pg\_toast\_temp\_%'` to the schema probe query.
+
+### Key Requirement: supabase_admin User
+The target `db_url` must use `supabase_admin` (superuser), not `postgres`. Only `supabase_admin` has the privileges to restore DDL in the `auth` and `storage` schemas. The `migrate.example.yml` now documents this requirement and provides the correct connection string format.
