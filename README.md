@@ -12,14 +12,14 @@ For deep customization (custom OAuth providers, Grafana modes, retention tuning,
 
 ## 📑 Table of Contents
 
-- [🚀 Quick Start (recommended)](#quick-start-recommended)
-- [🔧 Advanced: manual `install.sh` flow](#advanced-manual-installsh-flow)
-- [🔒 Optional Hardening](#optional-hardening)
-- [📦 What Gets Deployed](#what-gets-deployed)
-- [📚 Advanced Features](#advanced-features)
-- [🔒 Secure MCP Remote Access](#secure-mcp-remote-access)
-- [🚚 Migration from Supabase Cloud](#migration-from-supabase-cloud)
-- [📄 License](#license)
+- [🚀 Quick Start (recommended)](#-quick-start-recommended)
+- [🔧 Advanced: manual `install.sh` flow](#-advanced-manual-installsh-flow)
+- [🔒 Optional Hardening](#-optional-hardening)
+- [📦 What Gets Deployed](#-what-gets-deployed)
+- [📚 Advanced Features](#-advanced-features)
+- [🔒 Secure MCP Remote Access](#-secure-mcp-remote-access)
+- [🚚 Migration from Supabase Cloud](#-migration-from-supabase-cloud)
+- [📄 License](#-license)
 
 ---
 
