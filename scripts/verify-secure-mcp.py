@@ -52,7 +52,6 @@ def main():
         sb_supavisor_version="supabase/supavisor:latest",
         caddy_cert_base_path="/tmp",
         postgres_cert_path="/tmp",
-        postgres_domain="example.com",
         mcp_allowed_ips=["127.0.0.1", "::1"],
         deploy_user="deploy",
         deploy_env="prod",

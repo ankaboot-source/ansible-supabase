@@ -34,9 +34,19 @@
     group: "101"
     mode: '0755'
 
+- name: Ensure Supabase public domain is configured
+  ansible.builtin.assert:
+    that:
+      - "(((projects | default({})).supabase | default({})).domain | default('')) not in ['', 'changeit', 'your-domain.com', 'sb.example.com']"
+    fail_msg: >-
+      projects.supabase.domain is not set to a real public domain. It is used to
+      locate the Caddy TLS certificate and to generate the Postgres SSL
+      certificate. Run setup.sh so it is rendered from required.supabase_domain.
+    quiet: yes
+
 - name: Check if Caddy certificate exists
   ansible.builtin.stat:
-    path: "{{ caddy_cert_base_path }}/{{ postgres_domain }}/{{ postgres_domain }}.crt"
+    path: "{{ caddy_cert_base_path }}/{{ projects.supabase.domain }}/{{ projects.supabase.domain }}.crt"
   register: caddy_cert
 
 - name: Ensure Certs directory exists
@@ -49,7 +59,7 @@
 
 - name: Copy Postgres SSL certificate
   ansible.builtin.copy:
-    src: "{{ caddy_cert_base_path }}/{{ postgres_domain }}/{{ postgres_domain }}.crt"
+    src: "{{ caddy_cert_base_path }}/{{ projects.supabase.domain }}/{{ projects.supabase.domain }}.crt"
     dest: "{{ postgres_cert_path }}/server.crt"
     remote_src: yes
     owner: "100"
@@ -59,7 +69,7 @@
 
 - name: Copy Postgres SSL key
   ansible.builtin.copy:
-    src: "{{ caddy_cert_base_path }}/{{ postgres_domain }}/{{ postgres_domain }}.key"
+    src: "{{ caddy_cert_base_path }}/{{ projects.supabase.domain }}/{{ projects.supabase.domain }}.key"
     dest: "{{ postgres_cert_path }}/server.key"
     remote_src: yes
     owner: "100"
@@ -68,20 +78,39 @@
   when: caddy_cert.stat.exists
 
 - name: Validate Postgres cert exists
-  stat:
+  ansible.builtin.stat:
     path: "{{ postgres_cert_path }}/server.crt"
   register: pg_cert
 
-- name: Generate self-signed cert if Caddy's cert is missing
-  command: >
-    openssl req -x509 -nodes -days 365
-    -newkey rsa:2048
-    -keyout {{ postgres_cert_path }}/server.key
-    -out {{ postgres_cert_path }}/server.crt
-    -subj "/CN={{ postgres_domain }}"
-  args:
-    creates: "{{ postgres_cert_path }}/server.crt"
-  when: not pg_cert.stat.exists
+- name: Check Postgres cert matches the configured domain
+  ansible.builtin.shell: |
+    openssl x509 -in {{ postgres_cert_path }}/server.crt -noout -subject -nameopt RFC2253 | grep -q "CN={{ projects.supabase.domain }}"
+  register: pg_cert_check
+  failed_when: false
+  changed_when: false
+  when: pg_cert.stat.exists
+
+- name: Generate self-signed cert if missing or domain mismatch
+  ansible.builtin.shell: |
+    openssl req -x509 -nodes -days 365 \
+      -newkey rsa:2048 \
+      -keyout {{ postgres_cert_path }}/server.key \
+      -out {{ postgres_cert_path }}/server.crt \
+      -subj "/CN={{ projects.supabase.domain }}" \
+      -addext "subjectAltName=DNS:{{ projects.supabase.domain }},DNS:localhost,IP:127.0.0.1{% if ansible_default_ipv4 is defined and ansible_default_ipv4.address is defined %},IP:{{ ansible_default_ipv4.address }}{% endif %}"
+  when: >
+    (not pg_cert.stat.exists) or
+    (pg_cert_check.rc | default(1)) != 0
+
+- name: Set ownership and permissions on generated Postgres SSL files
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: "100"
+    group: "101"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ postgres_cert_path }}/server.key", mode: "0600" }
+    - { path: "{{ postgres_cert_path }}/server.crt", mode: "0644" }
 
 - name: Create Supabase files
   template:
