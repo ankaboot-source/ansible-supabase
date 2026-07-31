@@ -71,6 +71,15 @@ These are problems encountered while building this repo, and how they were fixed
 - **Mounted Postgres dirs and certs must use the image's real UID/GID** (currently 100/101 for the supabase postgres image), not guessed values.
 - **After cloning the Supabase repo as root, chown the whole tree to `deploy_user` recursively**, or the stack can't write to it.
 - **Kong route/plugin changes can break Kong's startup healthcheck** and take the whole API down (e.g. an `ip-restriction` plugin on `/mcp`). Test on a staging route before rolling out; keep risky config commented until the runtime rejection is understood.
+- **`foo.bar is defined` raises UndefinedError when `foo` itself is undefined** — guarding a nested attribute with `is defined` is not enough. Use `foo is defined and foo.bar is defined`, or `(foo | default({})).bar | default('')` for a chain.
+
+### Postgres SSL / Certificates
+- **Never put a config-driven value in `roles/*/defaults/main.yml`** — defaults are for constants only. The Postgres cert used to be generated with a hardcoded `postgres_domain: your-domain.com` placeholder, so every deployed cert had `CN=your-domain.com` and matched nothing. The role now reads `projects.supabase.domain` (the Caddy config domain, e.g. `sb.example.com`) directly, and an `assert` fails fast if it's still a placeholder.
+- **A self-signed cert with only a `CN` (no SANs) fails `sslmode=verify-full`.** Generate with `-addext "subjectAltName=DNS:<domain>,DNS:localhost,IP:127.0.0.1[,IP:<server_ip>]"` so hostname verification works whether clients connect by domain, loopback, or the server's public IP.
+- **`openssl req` writes the private key world-readable (0644)** and Postgres refuses to start ("private key file has group or world access"). chmod `0600` the key / `0644` the cert and chown both to the postgres image UID/GID (100/101) — done by the `Set ownership and permissions` task.
+- **The `creates:` guard meant an existing wrong cert was never regenerated** after a domain change. Check the live cert with `openssl x509 -noout -subject -nameopt RFC2253` and regenerate when it doesn't match the configured domain. Always use `-nameopt RFC2253` — the default subject format differs between OpenSSL 1.1.1 (`/CN=...`) and 3.x (`CN = ...`), which breaks naive `grep` comparisons.
+- **Prefer Caddy's real Let's Encrypt cert over self-signed** — look it up at `caddy_cert_base_path/<domain>/` (per-domain directory) and copy it; only fall back to self-signed when it's missing. The lookup only works if `caddy_cert_base_path` matches where Caddy actually stores certs.
+- **SSL was dead code until the compose args were uncommented** — the db container had `-c ssl=on` / `ssl_cert_file` / `ssl_key_file` commented out, so Postgres ignored the mounted certs entirely.
 
 ### setup.sh / config flow
 - **`set_env_var` uses `sed` on `key: value` lines — never run it on a list variable**, it corrupts the YAML (e.g. `docker_users`). For lists, replace only the `- item` line and leave the key line untouched.
