@@ -59,12 +59,59 @@ Configures UFW firewall — always allows SSH (port 22), then applies allow/deny
 ### Role: luks
 Encrypts a secondary block device with LUKS2 (AES-XTS-512), creates an `ext4` filesystem, mounts it, and configures automatic unlock at boot via crypttab/fstab. Includes a safeguard against encrypting the root device. No templates; one handler for `update-initramfs`.
 
+## Known Pitfalls & Lessons Learned
+
+These are problems encountered while building this repo, and how they were fixed. Do not repeat them.
+
+### Ansible / Jinja2
+- **`environment` clashes with Ansible's reserved keyword** — using it as a variable name silently broke the container-name suffix rendering. Use `deploy_env`. Check against the literal placeholder (`!= 'changeit'`), not truthiness — the placeholder is non-empty.
+- **`{% if %}` blocks leave stray whitespace/newlines in templated compose files** under trim_blocks. Use inline expressions instead: `{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}`.
+- **`docker compose up -d` does not reliably pick up config/env changes.** `start-supabase.sh` must run `down && up` for changes to take effect.
+- **Postgres refuses to init if its log dir is inside the data dir** ("data directory exists but is not empty"). Log to `/var/log/postgresql` (host-mounted into the container), never `/var/lib/postgresql/data/log`.
+- **Mounted Postgres dirs and certs must use the image's real UID/GID** (currently 100/101 for the supabase postgres image), not guessed values.
+- **After cloning the Supabase repo as root, chown the whole tree to `deploy_user` recursively**, or the stack can't write to it.
+- **Kong route/plugin changes can break Kong's startup healthcheck** and take the whole API down (e.g. an `ip-restriction` plugin on `/mcp`). Test on a staging route before rolling out; keep risky config commented until the runtime rejection is understood.
+
+### setup.sh / config flow
+- **`set_env_var` uses `sed` on `key: value` lines — never run it on a list variable**, it corrupts the YAML (e.g. `docker_users`). For lists, replace only the `- item` line and leave the key line untouched.
+- **When a rendered value may be empty or a placeholder, guard the write** with `[[ -n "$val" ]]` so template rendering doesn't break.
+- **Regenerate the whole playbook from component toggles** — never edit it line-by-line/uncomment fragments.
+
+### Monitoring
+- **Promtail's push URL must have a valid scheme** (`http://loki:3100/...`, not `http//loki:3100`).
+- **Promtail can't read Docker container logs without both** the `/var/lib/docker/containers` mount and a `docker: {}` pipeline stage.
+- **Bind Grafana/Loki/Prometheus/cAdvisor/node-exporter/Studio to `127.0.0.1` by default** — do not expose monitoring/admin ports on all interfaces.
+- **Grafana home dashboards are silently ignored unless wired in**: templates must be named `home.json.j2`, copied to the target path, and enabled via `default_home_dashboard_path` in grafana.ini. Duplicate `home.json` / `home.json.j2` files cause confusion.
+- **Never hardcode an OAuth provider as `enabled = true`** — gate it behind a toggle so placeholder credentials can't break Grafana startup.
+
+### Caddy / SSO
+- **After writing/fmt-ing the Caddyfile, reload/start caddy** (handler + systemd enable) or the new config is never applied.
+- **SSO allow lists are provider-specific**: github matches sub, gitlab/generic match email, discord uses role-based auth and has no allow list.
+
+### Auth / Email
+- **An empty `ADDITIONAL_REDIRECT_URLS` makes GoTrue fall back to the SITE_URL root** and breaks the magic-link callback. Always template it from config.
+- **Don't point `MAILER_TEMPLATES_*` at storage-object URLs** — they return 400 and GoTrue falls back to plaintext. Use a dedicated templates base URL.
+- **GoTrue subject placeholders resolve empty** unless titles are injected via user_metadata — use static subjects instead.
+- **The magic-link flow uses its own `magic_link` template type**, separate from `confirmation`. It needs dedicated `MAILER_SUBJECTS_MAGIC_LINK` / `MAILER_TEMPLATES_MAGIC_LINK` vars.
+- **Keep OTP expiry long enough** (1h) for email flows.
+- **Keep mailer templates/subjects brand-agnostic**; brand-specific values are injected via CI/CD overrides.
+
+### Supabase template sync
+- **Templates drift from upstream self-hosted releases** (e.g. postgres 15→17, removed analytics/vector, SAML routes, new healthchecks). Sync against the latest upstream compose on a regular basis.
+- **Never bake project-specific changes into the default templates** (e.g. m3llm shared networks) — apply them via CI/CD overrides instead.
+
+### Security-by-default
+- **The MCP endpoint must never be publicly reachable**; prefer SSH-tunnel access over opening Kong routes.
+- **Docs/README must default to the full secure-featured setup**, never the unprotected minimal one.
+
 ## Config Flow for New Variables
 When adding a new variable that users should configure in `config.yml`:
 1. Add the field to `config.example.yml` with a comment explaining usage
 2. Add a `cfg_get` / `set_env_var` pair in `setup.sh` to read from `config.yml` and write to `env/supabase.yml`
 3. If the variable is already a placeholder in `env/supabase.yml`, the `set_env_var` call (which uses `sed`) will replace it
 4. If a new Ansible template variable is needed, add it as a placeholder to `env/supabase.yml`
+
+See the **Ansible / Jinja2** and **setup.sh / config flow** pitfall subsections above — especially: never `set_env_var` a list, guard writes that can be empty, and avoid Ansible reserved words as variable names.
 
 ## Config Reading/Writing in setup.sh
 - `cfg_get "path.to.key"` — reads from `config.yml` via embedded Python YAML parser
