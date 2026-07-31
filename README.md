@@ -10,6 +10,19 @@ For deep customization (custom OAuth providers, Grafana modes, retention tuning,
 
 ---
 
+## 📑 Table of Contents
+
+- [🚀 Quick Start (recommended)](#quick-start-recommended)
+- [🔧 Advanced: manual `install.sh` flow](#advanced-manual-installsh-flow)
+- [🔒 Optional Hardening](#optional-hardening)
+- [📦 What Gets Deployed](#what-gets-deployed)
+- [📚 Advanced Features](#advanced-features)
+- [🔒 Secure MCP Remote Access](#secure-mcp-remote-access)
+- [🚚 Migration from Supabase Cloud](#migration-from-supabase-cloud)
+- [📄 License](#license)
+
+---
+
 ## 🚀 Quick Start (recommended)
 
 The deterministic installer (`setup.sh`) reads a single `config.yml` file, generates all cryptographic secrets, renders the Ansible variables, enables the components you want, and deploys. This is the easiest path for both humans and AI agents.
@@ -369,6 +382,38 @@ Plus the security/monitoring stack: **Caddy** (reverse proxy + TLS + SSO), **UFW
 | **Secure MCP Access** | MCP server restricted to localhost; authorized clients connect via SSH tunnel — no public exposure |
 
 Full documentation: **[docs/advanced-docs.md](docs/advanced-docs.md)**
+
+---
+
+## 🔒 Secure MCP Remote Access
+
+The Supabase MCP server is exposed at `/mcp` through the Kong gateway (routed to
+Studio's `/api/mcp`). It is **never publicly reachable** — Kong's
+`ip-restriction` allow list defaults to the Docker bridge gateway
+(`172.28.0.1`; Docker source-NATs host connections to that gateway), so only
+host-originated traffic can reach it. Caddy never reverse-proxies `/mcp`, and
+the direct `/api/mcp` path stays blocked (403).
+
+Authorized clients connect through an SSH tunnel, reusing the existing SSH
+access (port 22) — no new public ports or subdomains:
+
+```bash
+ssh -L 8080:localhost:8000 deploy_user@sb.example.com -N
+```
+
+Then point your MCP client at:
+
+```
+http://localhost:8080/mcp
+```
+
+- The allow list is configurable via `mcp_allowed_ips` in `env/supabase.yml`.
+  Add a private VPN subnet (e.g. `10.0.0.0/24`) to allow it in addition, or set
+  `mcp_allowed_ips: []` to fully disable `/mcp`.
+- **Warning:** adding a public IP or `0.0.0.0/0` re-exposes the endpoint to the
+  Internet — don't.
+
+Full details: **[docs/advanced-docs.md → "Secure MCP Remote Access"](docs/advanced-docs.md#secure-mcp-remote-access)**
 
 ---
 

@@ -70,7 +70,7 @@ These are problems encountered while building this repo, and how they were fixed
 - **Postgres refuses to init if its log dir is inside the data dir** ("data directory exists but is not empty"). Log to `/var/log/postgresql` (host-mounted into the container), never `/var/lib/postgresql/data/log`.
 - **Mounted Postgres dirs and certs must use the image's real UID/GID** (currently 100/101 for the supabase postgres image), not guessed values.
 - **After cloning the Supabase repo as root, chown the whole tree to `deploy_user` recursively**, or the stack can't write to it.
-- **Kong route/plugin changes can break Kong's startup healthcheck** and take the whole API down (e.g. an `ip-restriction` plugin on `/mcp`). Test on a staging route before rolling out; keep risky config commented until the runtime rejection is understood.
+- **Kong route/plugin changes can break Kong's startup healthcheck** and take the whole API down (e.g. an `ip-restriction` plugin on `/mcp`). Test on a staging route before rolling out; keep risky config commented until the runtime rejection is understood. The original `/mcp` `ip-restriction` rejection was later root-caused to a Docker NAT source-IP mismatch — see **MCP / Docker networking** below.
 - **`foo.bar is defined` raises UndefinedError when `foo` itself is undefined** — guarding a nested attribute with `is defined` is not enough. Use `foo is defined and foo.bar is defined`, or `(foo | default({})).bar | default('')` for a chain.
 
 ### Postgres SSL / Certificates
@@ -108,6 +108,12 @@ These are problems encountered while building this repo, and how they were fixed
 ### Supabase template sync
 - **Templates drift from upstream self-hosted releases** (e.g. postgres 15→17, removed analytics/vector, SAML routes, new healthchecks). Sync against the latest upstream compose on a regular basis.
 - **Never bake project-specific changes into the default templates** (e.g. m3llm shared networks) — apply them via CI/CD overrides instead.
+
+### MCP / Docker networking
+- **`ip-restriction` on `/mcp` with `127.0.0.1`/`::1` can never match** — Docker source-NATs every host-originated connection (localhost, SSH tunnels) to the Docker bridge gateway IP before it reaches Kong, so Kong sees the gateway, not the loopback address. A request from the server itself returns `403 {"message":"IP address not allowed: 172.18.0.1"}`. This was the real cause of the QA 502 that forced commit `b44b6a6` to revert the original MCP feature (`0fe79d3`).
+- **Pin the compose network subnet so the gateway is deterministic** — `docker-compose-supabase.yml.j2` declares `networks.default.ipam.config.subnet: 172.28.0.0/16`, making the gateway always `172.28.0.1`. `mcp_allowed_ips` must stay in sync with this gateway (default `[172.28.0.1]`). Without the pin, `docker compose down && up` re-issues whatever subnet is free, silently re-breaking the allow list.
+- **The Kong/compose template now ships a top-level `networks:` block** — anything that blind-appends a second `networks:` key (e.g. the m3llm CI/CD `deploy-supabase-stack.yml`, which adds `shared-net`) produces a YAML duplicate-key error and breaks the deploy. Merge into the existing block instead (`grep -q '^networks:'` + `sed -i '/^networks:/a\...'`), never append a second block.
+- **`verify-secure-mcp.py` only renders the template — it never runs Kong.** A syntactically valid but wrong allow list (e.g. `127.0.0.1`) ships green. When touching MCP, cross-check `mcp_allowed_ips` against the pinned subnet gateway.
 
 ### Security-by-default
 - **The MCP endpoint must never be publicly reachable**; prefer SSH-tunnel access over opening Kong routes.

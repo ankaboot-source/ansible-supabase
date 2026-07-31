@@ -52,7 +52,7 @@ def main():
         sb_supavisor_version="supabase/supavisor:latest",
         caddy_cert_base_path="/tmp",
         postgres_cert_path="/tmp",
-        mcp_allowed_ips=["127.0.0.1", "::1"],
+        mcp_allowed_ips=["172.28.0.1"],
         deploy_user="deploy",
         deploy_env="prod",
         supabase_path="supabase/docker",
@@ -113,20 +113,20 @@ def main():
     assert_true(rt is not None, "mcp-blocker has request-termination plugin")
     assert_true(rt.get("config", {}).get("status_code") == 403, "mcp-blocker returns 403")
 
-    # TC-MCP-002: mcp service has ip-restriction with localhost allow, no request-termination
+    # TC-MCP-002: mcp service has ip-restriction with bridge-gateway allow, no request-termination
     mcp = next((s for s in services if s.get("name") == "mcp"), None)
     assert_true(mcp is not None, "mcp service exists")
     mcp_plugins = get_plugins(mcp)
     ipr = next((p for p in mcp_plugins if p.get("name") == "ip-restriction"), None)
     assert_true(ipr is not None, "mcp service has ip-restriction plugin")
     allow = ipr.get("config", {}).get("allow", [])
-    assert_true("127.0.0.1" in allow and "::1" in allow, "default allow list contains localhost")
+    assert_true("172.28.0.1" in allow, "default allow list contains the Docker bridge gateway")
     rt_mcp = next((p for p in mcp_plugins if p.get("name") == "request-termination"), None)
     assert_true(rt_mcp is None, "mcp service has NO request-termination plugin")
 
     # TC-MCP-003 / TC-MCP-006: custom allowed IPs honored
     custom = dict(defaults)
-    custom["mcp_allowed_ips"] = ["10.0.0.5", "127.0.0.1", "10.0.0.0/24"]
+    custom["mcp_allowed_ips"] = ["10.0.0.5", "172.28.0.1", "10.0.0.0/24"]
     rendered_custom = render_kong(**custom)
     doc_custom = yaml.safe_load(rendered_custom)
     services_custom = doc_custom.get("services", [])
@@ -135,7 +135,7 @@ def main():
     allow_custom = ipr_custom.get("config", {}).get("allow", [])
     assert_true("10.0.0.5" in allow_custom, "custom allow list includes 10.0.0.5")
     assert_true("10.0.0.0/24" in allow_custom, "custom allow list includes 10.0.0.0/24")
-    assert_true("127.0.0.1" in allow_custom, "custom allow list includes 127.0.0.1")
+    assert_true("172.28.0.1" in allow_custom, "custom allow list includes 172.28.0.1")
 
     # TC-MCP-010: no /mcp path in Caddy example projects
     # Parse env/supabase.yml and inspect the projects' upstream paths.

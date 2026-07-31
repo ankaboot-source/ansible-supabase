@@ -15,10 +15,12 @@ caddy_cert_base_path: "/home/caddy/.local/share/caddy/certificates/acme-v02.api.
 postgres_cert_path: "/opt/postgres-certs"
 
 # MCP (Model Context Protocol) secure access.
-# The /mcp Kong route is restricted to these IPs only. Keep localhost-only
-# (127.0.0.1, ::1) so the MCP server is never exposed to the public Internet;
-# authorized remote clients connect via SSH tunnel. See
-# docs/advanced-docs.md -> "Secure MCP Remote Access".
+# The /mcp Kong route is restricted to these IPs only. Because Docker
+# source-NATs host-originated connections to the Docker bridge gateway IP,
+# the default allow list must contain the compose network gateway
+# (172.28.0.1 - see the pinned subnet in docker-compose-supabase.yml.j2),
+# not 127.0.0.1 which Kong never sees for host traffic. Authorized remote
+# clients connect via SSH tunnel. Set to [] to fully disable /mcp.
+# See docs/advanced-docs.md -> "Secure MCP Remote Access".
 mcp_allowed_ips:
-  - 127.0.0.1
-  - ::1
+  - 172.28.0.1
