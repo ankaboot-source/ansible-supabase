@@ -92,6 +92,7 @@ These are problems encountered while building this repo, and how they were fixed
 - **Promtail can't read Docker container logs without both** the `/var/lib/docker/containers` mount and a `docker: {}` pipeline stage.
 - **Bind Grafana/Loki/Prometheus/cAdvisor/node-exporter/Studio to `127.0.0.1` by default** — do not expose monitoring/admin ports on all interfaces.
 - **Grafana home dashboards are silently ignored unless wired in**: templates must be named `home.json.j2`, copied to the target path, and enabled via `default_home_dashboard_path` in grafana.ini. Duplicate `home.json` / `home.json.j2` files cause confusion.
+- **Grafana dashboard exports use `{{label_name}}` legend syntax that collides with Ansible**: a verbatim dashboard JSON shipped as `server-stats.json.j2` rendered `{{device}}`/`{{name}}`/`{{instance}}` as Ansible vars and failed with `'device' is undefined`. Wrap dashboard JSON in `{% raw %}`...`{% endraw %}` (renders byte-identical; no real Ansible vars in such files).
 - **Never hardcode an OAuth provider as `enabled = true`** — gate it behind a toggle so placeholder credentials can't break Grafana startup.
 
 ### Caddy / SSO
