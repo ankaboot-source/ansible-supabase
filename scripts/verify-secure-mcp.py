@@ -13,8 +13,13 @@ KONG_TEMPLATE = "kong-supabase.yml.j2"
 CADDY_TEMPLATES = "roles/caddy/templates"
 
 
-def render_kong(**vars):
-    env = Environment(loader=FileSystemLoader(ROLE_TEMPLATES), keep_trailing_newline=True)
+def render_kong(trim_blocks=False, lstrip_blocks=False, **vars):
+    env = Environment(
+        loader=FileSystemLoader(ROLE_TEMPLATES),
+        keep_trailing_newline=True,
+        trim_blocks=trim_blocks,
+        lstrip_blocks=lstrip_blocks,
+    )
     return env.get_template(KONG_TEMPLATE).render(**vars)
 
 
@@ -99,6 +104,17 @@ def main():
     )
 
     # TC-MCP-005: render with defaults, parse YAML
+    # Also render under every trim_blocks/lstrip_blocks combination: block
+    # {% for %} tags collapse onto one line when Ansible sets trim_blocks,
+    # which broke Kong's parser (allow/deny entries must stay inline or on
+    # separate lines).
+    for trim, lstrip in [(False, False), (True, False), (False, True), (True, True)]:
+        rendered = render_kong(trim_blocks=trim, lstrip_blocks=lstrip, **defaults)
+        doc = yaml.safe_load(rendered)
+        assert_true(
+            isinstance(doc, dict),
+            f"rendered kong.yml is a YAML mapping (trim_blocks={trim}, lstrip_blocks={lstrip})",
+        )
     rendered = render_kong(**defaults)
     doc = yaml.safe_load(rendered)
     assert_true(isinstance(doc, dict), "rendered kong.yml is a YAML mapping")
