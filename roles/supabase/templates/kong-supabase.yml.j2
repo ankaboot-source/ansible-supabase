@@ -424,10 +424,7 @@ services:
       - name: cors
       - name: ip-restriction
         config:
-          allow:
-            {%- for ip in mcp_allowed_ips %}
-            - {{ ip }}
-            {%- endfor %}
+          allow: {{ mcp_allowed_ips }}
           deny: []
 
 
