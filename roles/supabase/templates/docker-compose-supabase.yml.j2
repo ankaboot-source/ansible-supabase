@@ -609,3 +609,14 @@ services:
 volumes:
   db-config:
   deno-cache:
+
+networks:
+  # Pin the compose project network subnet so the Docker bridge gateway IP is
+  # deterministic. Kong's /mcp ip-restriction allow list (mcp_allowed_ips)
+  # must match this gateway: Docker source-NATs every host-originated
+  # connection to the bridge gateway, so 127.0.0.1 is never seen by Kong.
+  # Keep mcp_allowed_ips in sync with the gateway below (172.28.0.1).
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

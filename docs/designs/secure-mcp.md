@@ -3,10 +3,12 @@
 ## Problem
 
 The Supabase MCP (Model Context Protocol) server endpoint (`/mcp` →
-`http://studio:3000/api/mcp`) can be exposed to the public Internet. The current
-Kong configuration blocks the endpoint by default but only offers a commented-out
-IP-allow-list mechanism that requires the service to be publicly reachable for
-remote clients to connect.
+`http://studio:3000/api/mcp`) can be exposed to the public Internet. A naive
+`ip-restriction` allow list of `127.0.0.1`/`::1` does not work here because
+Docker source-NATs every host-originated connection to the Docker bridge gateway
+IP before it reaches Kong — so Kong never sees a loopback source. The allow list
+must contain that gateway IP instead. The `/api/mcp` direct route stays fully
+blocked so remote clients can only reach the endpoint via an SSH tunnel.
 
 ## Goal
 
@@ -33,11 +35,15 @@ SSH tunneling is the chosen mechanism because:
 
 ### Kong layer (defense-in-depth)
 
-The `/mcp` Kong route is restricted to localhost (`127.0.0.1`, `::1`) via the
-`ip-restriction` plugin. This is configurable through `mcp_allowed_ips` so
-operators can tighten or relax the allow list, but the **default is localhost
-only**. The `/api/mcp` direct route stays fully blocked (request-termination
-403) so the only reachable path is `/mcp` from the server itself.
+The `/mcp` Kong route is restricted to host-originated traffic via the
+`ip-restriction` plugin. Because of Docker bridge NAT, connections from the host
+(including SSH tunnels) appear to Kong with the compose network gateway IP as
+the source. The compose file pins the network subnet (`172.28.0.0/16`) so the
+gateway is deterministically `172.28.0.1`, and `mcp_allowed_ips` defaults to that
+gateway. External clients keep their real public IP, which is not in the allow
+list, so they stay blocked. The `/api/mcp` direct route stays fully blocked
+(request-termination 403) so the only reachable path is `/mcp` from the server
+itself. Set `mcp_allowed_ips: []` to fully disable `/mcp`.
 
 ### Firewall layer
 
@@ -63,7 +69,7 @@ ssh -L 8080:localhost:8000 deploy_user@sb.example.com
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `mcp_allowed_ips` | `[127.0.0.1, ::1]` | IPs allowed to reach `/mcp` via Kong. Keep localhost-only for SSH-tunnel access. |
+| `mcp_allowed_ips` | `[172.28.0.1]` | IPs allowed to reach `/mcp` via Kong. Default is the Docker bridge gateway (host-originated traffic incl. SSH tunnels). Set `[]` to fully disable. Must match the pinned subnet gateway in `docker-compose-supabase.yml.j2`. |
 
 ## Out of scope
 

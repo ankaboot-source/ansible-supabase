@@ -15,26 +15,27 @@ exposure while remaining reachable to authorized clients via SSH tunnel.
   `status_code: 403`
 - **And** the response message is `Access is forbidden.`
 
-### TC-MCP-002: Kong `/mcp` route is restricted to localhost by default
+### TC-MCP-002: Kong `/mcp` route is restricted to host-originated traffic by default
 
 - **Given** the rendered `kong.yml` with no `mcp_allowed_ips` override
 - **When** the template is rendered
 - **Then** the `mcp` service has an `ip-restriction` plugin
-- **And** the `allow` list contains `127.0.0.1` and `::1`
+- **And** the `allow` list contains the Docker bridge gateway `172.28.0.1`
+  (Docker source-NATs host connections to the gateway; `127.0.0.1` is never seen)
 - **And** there is **no** `request-termination` plugin on the `mcp` service
 
 ### TC-MCP-003: `mcp_allowed_ips` override is honored
 
-- **Given** `env/supabase.yml` sets `mcp_allowed_ips: [10.0.0.5, 127.0.0.1]`
+- **Given** `env/supabase.yml` sets `mcp_allowed_ips: [10.0.0.5, 172.28.0.1]`
 - **When** the template is rendered
 - **Then** the `ip-restriction` `allow` list contains `10.0.0.5` and
-  `127.0.0.1`
+  `172.28.0.1`
 
-### TC-MCP-004: Default `mcp_allowed_ips` is localhost-only
+### TC-MCP-004: Default `mcp_allowed_ips` is the Docker bridge gateway
 
 - **Given** `roles/supabase/defaults/main.yml`
 - **When** the defaults are loaded
-- **Then** `mcp_allowed_ips` equals `[127.0.0.1, ::1]`
+- **Then** `mcp_allowed_ips` equals `[172.28.0.1]` (matches the pinned compose subnet gateway)
 
 ### TC-MCP-005: Kong config YAML is syntactically valid
 
