@@ -373,9 +373,10 @@ firewall_deny:
 
 The Supabase MCP (Model Context Protocol) server exposes the Studio API at
 `/mcp` through the Kong gateway. By default this endpoint is **restricted to
-localhost** so it is never reachable from the public Internet. Authorized
-remote clients connect through an SSH tunnel, which reuses the existing SSH
-access (port 22) and requires no new public ports, subdomains, or services.
+host-originated traffic** so it is never reachable from the public Internet.
+Authorized remote clients connect through an SSH tunnel, which reuses the
+existing SSH access (port 22) and requires no new public ports, subdomains, or
+services.
 
 ### How it works
 
@@ -383,8 +384,11 @@ access (port 22) and requires no new public ports, subdomains, or services.
 MCP client (local) ──SSH tunnel (port 22)──> server ──> Kong :8000/mcp ──> Studio :3000/api/mcp
 ```
 
-- **Kong** applies an `ip-restriction` plugin to `/mcp` that only allows
-  `127.0.0.1` and `::1` (configurable via `mcp_allowed_ips`).
+- **Kong** applies an `ip-restriction` plugin to `/mcp`. Because Docker
+  source-NATs host connections to the bridge gateway, the allow list defaults to
+  the compose network gateway `172.28.0.1` (the subnet is pinned to
+  `172.28.0.0/16` in `docker-compose-supabase.yml.j2` so the gateway is
+  deterministic). This is configurable via `mcp_allowed_ips`.
 - **UFW** denies port `8000` (Kong) from external IPs by default.
 - **Caddy** never reverse-proxies `/mcp` — there is no public subdomain for it.
 - The direct `/api/mcp` path stays fully blocked (`request-termination` 403).
@@ -414,24 +418,25 @@ Close the tunnel with `Ctrl-C` (or by exiting the SSH session) when finished.
 The allow list is controlled by `mcp_allowed_ips` in `env/supabase.yml`:
 
 ```yaml
-# Default: localhost-only (SSH tunnel access)
+# Default: Docker bridge gateway (host-originated traffic, incl. SSH tunnels).
+# Must match the pinned compose subnet gateway in docker-compose-supabase.yml.j2.
 mcp_allowed_ips:
-  - 127.0.0.1
-  - ::1
+  - 172.28.0.1
 ```
 
-To allow a private VPN subnet (e.g. WireGuard) in addition to localhost:
+To allow a private VPN subnet (e.g. WireGuard) in addition:
 
 ```yaml
 mcp_allowed_ips:
-  - 127.0.0.1
-  - ::1
+  - 172.28.0.1
   - 10.0.0.0/24
 ```
 
+Set `mcp_allowed_ips: []` to fully disable `/mcp`.
+
 > **Warning:** Adding a public IP or `0.0.0.0/0` re-exposes the MCP endpoint to
 > the Internet and defeats the purpose of this security control. Keep the allow
-> list limited to localhost and private ranges.
+> list limited to private ranges.
 
 ### Why SSH tunneling?
 
@@ -534,7 +539,7 @@ All values go in `env/supabase.yml`.
 | `openai_api_key` | No | OpenAI API key |
 | `supabase_path` | No | Relative path for Supabase docker dir |
 | `kong_conf_path` | No | Relative path for Kong config |
-| `mcp_allowed_ips` | No | IPs allowed to reach `/mcp` via Kong (default: `[127.0.0.1, ::1]` — localhost only for SSH-tunnel access; see [Secure MCP Remote Access](#secure-mcp-remote-access)) |
+| `mcp_allowed_ips` | No | IPs allowed to reach `/mcp` via Kong (default: `[172.28.0.1]` — the Docker bridge gateway, since Docker source-NATs host connections; set `[]` to disable; see [Secure MCP Remote Access](#secure-mcp-remote-access)) |
 
 ### CADDY
 
