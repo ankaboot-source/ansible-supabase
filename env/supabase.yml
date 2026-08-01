@@ -120,6 +120,10 @@ azure_enabled: false
 azure_client_id: changeit
 azure_secret: changeit
 
+facebook_enabled: false
+facebook_client_id: changeit
+facebook_secret: changeit
+
 openai_api_key: changeit
 
 
