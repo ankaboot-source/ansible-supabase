@@ -33,4 +33,4 @@
 
 - name: Start monitor instances
   become: yes
-  ansible.builtin.command: docker compose -f /home/"{{ deploy_user }}"/"{{ monitor_path }}"/docker-compose-monitor.yml down && docker compose -f /home/"{{ deploy_user }}"/"{{ monitor_path }}"/docker-compose-monitor.yml up -d
+  ansible.builtin.shell: docker compose -f /home/"{{ deploy_user }}"/"{{ monitor_path }}"/docker-compose-monitor.yml down && docker compose -f /home/"{{ deploy_user }}"/"{{ monitor_path }}"/docker-compose-monitor.yml up -d
