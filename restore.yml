@@ -67,13 +67,25 @@
         - confirm | default('') != 'yes'
         - restore_confirm.user_input | default('') != 'yes'
 
-    - name: Take fresh full backup of current state (last-chance)
+    - name: Take fresh full backup of current state (last-chance, best-effort)
       command: >
         docker exec {{ pgbackrest_container }}
         pgbackrest --stanza={{ backup_stanza_name | default('main') }}
         --type=full --log-level-console=info backup
       register: pre_restore_backup
-      failed_when: pre_restore_backup.rc != 0
+      failed_when: false
+      when: skip_pre_backup | default('') != 'yes'
+
+    - name: Warn if pre-restore backup failed (db may already be down)
+      debug:
+        msg:
+          - "WARNING: pre-restore backup failed (exit {{ pre_restore_backup.rc | default('skipped') }})."
+          - "  This is expected if the db is already down or unhealthy."
+          - "  Proceeding with restore from the most recent existing backup."
+          - "  To skip this check entirely, re-run with -e skip_pre_backup=yes"
+      when:
+        - skip_pre_backup | default('') != 'yes'
+        - pre_restore_backup.rc | default(0) != 0
 
     - name: Stop the database container
       command: docker stop {{ db_container }}

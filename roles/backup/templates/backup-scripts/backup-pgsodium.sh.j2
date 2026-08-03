@@ -7,13 +7,14 @@
 set -eu
 
 DB_CONTAINER="supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
-BACKUP_DIR="{{ backup_path }}"
+BACKUP_DIR="/home/{{ deploy_user }}/backup"
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Backing up pgsodium root key..."
 mkdir -p "${BACKUP_DIR}"
 
-# Extract the pgsodium root key from the db-config volume via the db container
-docker compose run --rm --no-deps db cat /etc/postgresql-custom/pgsodium_root.key \
+# Extract the pgsodium root key from the db-config volume via docker exec on the
+# running db container (the backup compose has no db service).
+docker exec "${DB_CONTAINER}" cat /etc/postgresql-custom/pgsodium_root.key \
   > "${BACKUP_DIR}/pgsodium_root.key" 2>/dev/null
 rc=$?
 if [ $rc -ne 0 ]; then
@@ -26,7 +27,7 @@ fi
 chmod 600 "${BACKUP_DIR}/pgsodium_root.key"
 
 # Also back up custom GUCs (conf.d/)
-docker compose run --rm --no-deps db tar -C /etc/postgresql-custom/conf.d -c . \
+docker exec "${DB_CONTAINER}" tar -C /etc/postgresql-custom/conf.d -c . \
   > "${BACKUP_DIR}/postgres-custom-confd.tar" 2>/dev/null || true
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] pgsodium key + custom GUCs backed up to ${BACKUP_DIR}/"

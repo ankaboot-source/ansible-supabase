@@ -10,8 +10,8 @@ repo1-path=/{{ minio_bucket_name if backup_repo_type == 'minio' else 'pgbackrest
 repo1-s3-bucket={{ minio_bucket_name }}
 repo1-s3-endpoint=http://minio:9000
 repo1-s3-region=us-east-1
-repo1-s3-key={{ backup_s3_key | default('minioadmin') }}
-repo1-s3-key-secret={{ backup_s3_key_secret | default('minioadmin') }}
+repo1-s3-key={{ backup_s3_key | default('minioadmin') if backup_creds_source | default('env') == 'env' else '${PGBACKREST_REPO1_S3_KEY}' }}
+repo1-s3-key-secret={{ backup_s3_key_secret | default('minioadmin') if backup_creds_source | default('env') == 'env' else '${PGBACKREST_REPO1_S3_KEY_SECRET}' }}
 repo1-s3-uri-style=path
 repo1-s3-verify-tls=n
 {% elif backup_repo_type == 's3' %}
@@ -19,8 +19,8 @@ repo1-s3-verify-tls=n
 repo1-s3-bucket={{ backup_s3_bucket }}
 repo1-s3-endpoint={{ backup_s3_endpoint }}
 repo1-s3-region={{ backup_s3_region }}
-repo1-s3-key={{ backup_s3_key }}
-repo1-s3-key-secret={{ backup_s3_key_secret }}
+repo1-s3-key={{ backup_s3_key if backup_creds_source | default('env') == 'env' else '${PGBACKREST_REPO1_S3_KEY}' }}
+repo1-s3-key-secret={{ backup_s3_key_secret if backup_creds_source | default('env') == 'env' else '${PGBACKREST_REPO1_S3_KEY_SECRET}' }}
 repo1-s3-uri-style={{ backup_s3_uri_style }}
 {% if not backup_s3_verify_tls %}repo1-s3-verify-tls=n
 {% endif %}
@@ -30,7 +30,7 @@ repo1-s3-uri-style={{ backup_s3_uri_style }}
 {% if backup_encryption %}
 # Encryption at rest
 repo1-cipher-type={{ backup_cipher_type }}
-repo1-cipher-pass={{ backup_cipher_pass }}
+repo1-cipher-pass={{ backup_cipher_pass if backup_creds_source | default('env') == 'env' else '${PGBACKREST_REPO1_CIPHER_PASS}' }}
 {% endif %}
 
 # Retention

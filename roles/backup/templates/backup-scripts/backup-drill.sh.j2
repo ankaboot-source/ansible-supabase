@@ -4,11 +4,15 @@
 # + healthchecks. Never touches prod PGDATA. Opt-in (backup_restore_drill).
 set -eu
 
+BACKUP_DIR="/home/{{ deploy_user }}/backup"
+cd "$BACKUP_DIR"
+
 CONTAINER="supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
 STANZA="{{ backup_stanza_name }}"
 DRILL_VOL="pgbackrest-drill-$(date +%s)"
 DRILL_CONTAINER="supabase-pgbackrest-drill{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
 PG_IMAGE="{{ sb_db_version | default('supabase/postgres:17.6.1.136') }}"
+PGBR_IMAGE="{{ pgbackrest_image }}"
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting restore drill (throwaway volume: $DRILL_VOL)..."
 
@@ -19,9 +23,9 @@ docker volume create "$DRILL_VOL" >/dev/null
 docker run --rm \
   --name "$DRILL_CONTAINER" \
   -v "$DRILL_VOL":/var/lib/postgresql/data \
-  -v "$(pwd)/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" \
-  -v "$(pwd)/volumes/pgbackrest:/var/lib/pgbackrest:ro" \
-  "$PGBACKREST_IMAGE" \
+  -v "$BACKUP_DIR/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" \
+  -v "$BACKUP_DIR/volumes/pgbackrest:/var/lib/pgbackrest:ro" \
+  "$PGBR_IMAGE" \
   pgbackrest --stanza="$STANZA" --no-delta --archive-mode=off \
     --target-timeline=current --log-level-console=info restore
 rc=$?
@@ -31,15 +35,16 @@ if [ $rc -ne 0 ]; then
   exit $rc
 fi
 
-# Start a read-only Postgres on a side port to healthcheck
+# Start a read-only Postgres on a side port to healthcheck.
+# Use POSTGRES_HOST_AUTH_METHOD=trust so the restored PGDATA accepts local
+# connections without needing the original password.
 docker run -d --rm \
   --name "${DRILL_CONTAINER}-pg" \
-  -e POSTGRES_PASSWORD=drill \
+  -e POSTGRES_HOST_AUTH_METHOD=trust \
   -p 127.0.0.1:{{ backup_drill_pg_port | default('5433') }}:5432 \
   -v "$DRILL_VOL":/var/lib/postgresql/data \
   "$PG_IMAGE" \
-  -c archive_mode=off -c shared_preload_libraries=pgsodium.so \
-  -c config_file=/etc/postgresql/postgresql.conf >/dev/null
+  -c archive_mode=off >/dev/null
 sleep 10
 
 # Healthcheck: can we connect + is it writable?

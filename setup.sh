@@ -422,9 +422,16 @@ if cfg_bool "components.backup"; then
   [[ -z "$s3_verify" ]] && s3_verify="true"
   set_env_var "backup_s3_verify_tls" "$s3_verify"
 
-  # MinIO creds (for local repo)
-  set_env_var "minio_root_user" "$(cfg_get "advanced.backup.minio_root_user")"
-  set_env_var "minio_root_password" "$(cfg_get "advanced.backup.minio_root_password")"
+  # MinIO creds (for local repo) — map to backup_s3_key/secret so templates work
+  if [[ "$repo_type" == "minio" ]]; then
+    minio_user="$(cfg_get "advanced.backup.minio_root_user")"
+    minio_pass="$(cfg_get "advanced.backup.minio_root_password")"
+    [[ -n "$minio_user" ]] && set_env_var "backup_s3_key" "$minio_user"
+    [[ -n "$minio_pass" ]] && set_env_var "backup_s3_key_secret" "$minio_pass"
+  else
+    set_env_var "minio_root_user" "$(cfg_get "advanced.backup.minio_root_user")"
+    set_env_var "minio_root_password" "$(cfg_get "advanced.backup.minio_root_password")"
+  fi
 
   # Encryption — forced ON for external (s3) repo
   encryption="$(cfg_get "advanced.backup.encryption")"
@@ -435,11 +442,17 @@ if cfg_bool "components.backup"; then
   fi
   set_env_var "backup_encryption" "$encryption"
   if [[ "$encryption" == "true" ]]; then
-    # Generate a cipher passphrase if not already set
-    cipher_pass="$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")"
-    set_env_var "backup_cipher_pass" "$cipher_pass"
-    warn "backup_encryption is ON. Cipher passphrase generated and stored in env/supabase.yml."
-    warn "  STORE THIS OFF THE SERVER (password manager). If lost, backups are unrecoverable."
+    # Generate a cipher passphrase only if not already set (avoid clobbering
+    # an existing passphrase — that would make existing backups unrecoverable).
+    existing_pass="$(grep -E '^backup_cipher_pass:' "$ENV_FILE" 2>/dev/null | sed 's/^backup_cipher_pass: *//' | tr -d '\"' || true)"
+    if [[ -z "$existing_pass" || "$existing_pass" == "changeit" ]]; then
+      cipher_pass="$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")"
+      set_env_var "backup_cipher_pass" "$cipher_pass"
+      warn "backup_encryption is ON. Cipher passphrase generated and stored in env/supabase.yml."
+      warn "  STORE THIS OFF THE SERVER (password manager). If lost, backups are unrecoverable."
+    else
+      log "Reusing existing backup_cipher_pass (not regenerating — preserves existing backups)."
+    fi
   fi
 
   # Credentials source

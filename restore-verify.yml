@@ -57,7 +57,7 @@
       command: >
         docker run -d --rm
         --name {{ drill_container }}-pg
-        -e POSTGRES_PASSWORD=verify
+        -e POSTGRES_HOST_AUTH_METHOD=trust
         -p 127.0.0.1:{{ drill_pg_port }}:5432
         -v {{ drill_vol }}:/var/lib/postgresql/data
         {{ sb_db_version | default('supabase/postgres:17.6.1.136') }}

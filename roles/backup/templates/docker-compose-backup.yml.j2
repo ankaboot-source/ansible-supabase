@@ -7,6 +7,8 @@ services:
     image: {{ pgbackrest_image }}
     container_name: supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       TZ: {{ timezone | default('UTC') }}
       BACKREST_UID: "{{ pgbackrest_uid }}"

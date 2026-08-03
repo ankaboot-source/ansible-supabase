@@ -80,8 +80,11 @@
     backup_compose_dir: "/home/{{ deploy_user }}/backup"
   register: backup_compose
 
-# --- Render .env for backup compose (only when creds_source is env) ---
-- name: Render backup .env (plaintext credentials)
+# --- Render .env for backup compose (always — compose references it via env_file) ---
+# In 'env' mode: plaintext credentials from env/supabase.yml.
+# In 'vault' mode: values come from Ansible Vault vars; the .env is still on the box
+# but the Ansible vars file is vault-encrypted (not plaintext in env/supabase.yml).
+- name: Render backup .env
   template:
     src: backup-env.j2
     dest: "{{ backup_compose_dir }}/.env"
@@ -90,7 +93,6 @@
     mode: "0600"
   vars:
     backup_compose_dir: "/home/{{ deploy_user }}/backup"
-  when: backup_creds_source == 'env'
 
 # --- Render backup scripts ---
 - name: Render backup scripts

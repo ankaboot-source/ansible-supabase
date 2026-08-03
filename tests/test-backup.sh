@@ -335,6 +335,56 @@ else
   fail "restore drill not off by default"
 fi
 
+# ─── TC-BACKUP-034: prometheus.yml.j2 wires pgbackrest_exporter + alert rules ─
+echo "TC-BACKUP-034: prometheus.yml.j2 wires pgbackrest_exporter + alert rules"
+PROM="$WORKTREE/roles/monitor/templates/prometheus.yml.j2"
+if grep -q "pgbackrest_exporter" "$PROM" \
+  && grep -q "9854" "$PROM" \
+  && grep -q "prometheus-backup-alerts.yml" "$PROM"; then
+  ok "prometheus.yml.j2 wires exporter + alert rules"
+else
+  fail "prometheus.yml.j2 missing exporter scrape or alert rule_files"
+fi
+
+# ─── TC-BACKUP-035: pgsodium script uses docker exec (not docker compose run) ─
+echo "TC-BACKUP-035: pgsodium script uses docker exec (not docker compose run)"
+PGSODIUM="$WORKTREE/roles/backup/templates/backup-scripts/backup-pgsodium.sh.j2"
+if grep -q "docker exec" "$PGSODIUM" \
+  && ! grep -q "docker compose run" "$PGSODIUM"; then
+  ok "pgsodium script uses docker exec"
+else
+  fail "pgsodium script still uses docker compose run"
+fi
+
+# ─── TC-BACKUP-036: db container mounts docker binary when backup enabled ────
+echo "TC-BACKUP-036: db container mounts docker binary when backup enabled"
+COMPOSE="$WORKTREE/roles/supabase/templates/docker-compose-supabase.yml.j2"
+if grep -q "/usr/bin/docker:/usr/bin/docker:ro" "$COMPOSE"; then
+  ok "db container bind-mounts docker binary"
+else
+  fail "db container does not bind-mount docker binary"
+fi
+
+# ─── TC-BACKUP-037: restore.yml pre-restore backup is best-effort ───────────
+echo "TC-BACKUP-037: restore.yml pre-restore backup is best-effort"
+RESTORE="$WORKTREE/restore.yml"
+if grep -q "failed_when: false" "$RESTORE" \
+  && grep -q "skip_pre_backup" "$RESTORE"; then
+  ok "restore.yml pre-restore backup is best-effort"
+else
+  fail "restore.yml pre-restore backup is a hard blocker"
+fi
+
+# ─── TC-BACKUP-038: restore-verify.yml uses trust auth ─────────────────────
+echo "TC-BACKUP-038: restore-verify.yml uses trust auth"
+VERIFY="$WORKTREE/restore-verify.yml"
+if grep -q "POSTGRES_HOST_AUTH_METHOD=trust" "$VERIFY" \
+  && ! grep -q "POSTGRES_PASSWORD=verify" "$VERIFY"; then
+  ok "restore-verify.yml uses trust auth"
+else
+  fail "restore-verify.yml still uses POSTGRES_PASSWORD=verify"
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 echo ""
 echo "──────────────────────────────────────────"
