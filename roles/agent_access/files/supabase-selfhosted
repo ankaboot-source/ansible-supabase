@@ -227,6 +227,13 @@ def cmd_info(args: argparse.Namespace) -> int:
         for name, spec in manifest.get("secrets", {}).items()
     }
 
+    # Defense in depth: redact before rendering so raw secret values never
+    # reach the rendering layer when they won't be displayed. The renderers
+    # also check `show_secrets` for format decisions, but this ensures the
+    # data passed to them is already safe when show is False.
+    if not show:
+        secrets = {name: REDACTED for name in secrets}
+
     if args.json:
         sys.stdout.write(render_json(manifest, secrets, show))
     else:
