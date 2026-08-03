@@ -1,0 +1,34 @@
+#!/bin/sh
+# Managed by Ansible — do not edit manually.
+# pgsodium root key backup.
+# The db-config Docker named volume holds /etc/postgresql-custom/pgsodium_root.key
+# (32-byte root key). Without it, every vault.secret and every pgsodium-encrypted
+# column is unrecoverable. Also backs up /etc/postgresql-custom/conf.d/ (custom GUCs).
+set -eu
+
+DB_CONTAINER="supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+BACKUP_DIR="{{ backup_path }}"
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Backing up pgsodium root key..."
+mkdir -p "${BACKUP_DIR}"
+
+# Extract the pgsodium root key from the db-config volume via the db container
+docker compose run --rm --no-deps db cat /etc/postgresql-custom/pgsodium_root.key \
+  > "${BACKUP_DIR}/pgsodium_root.key" 2>/dev/null
+rc=$?
+if [ $rc -ne 0 ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WARNING: could not read pgsodium_root.key (exit $rc)" >&2
+  echo "         If this project uses pgsodium/vault, the key is required for restore."
+  # Not fatal — some projects don't use pgsodium
+  exit 0
+fi
+
+chmod 600 "${BACKUP_DIR}/pgsodium_root.key"
+
+# Also back up custom GUCs (conf.d/)
+docker compose run --rm --no-deps db tar -C /etc/postgresql-custom/conf.d -c . \
+  > "${BACKUP_DIR}/postgres-custom-confd.tar" 2>/dev/null || true
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] pgsodium key + custom GUCs backed up to ${BACKUP_DIR}/"
+echo "WARNING: Store the pgsodium root key OFF the server (e.g. in a password manager)."
+echo "         If lost, all vault.secrets and pgsodium-encrypted columns are unrecoverable."

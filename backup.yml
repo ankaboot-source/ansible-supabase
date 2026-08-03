@@ -1,0 +1,36 @@
+---
+# backup.yml — on-demand full backup
+#
+# Usage:
+#   ansible-playbook backup.yml
+#
+# Runs a full backup immediately via pgBackRest. Useful before risky
+# migrations or as a manual trigger outside the cron schedule.
+
+- name: On-demand full backup
+  hosts: all
+  become: true
+  vars:
+    pgbackrest_container: "supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+
+  tasks:
+    - name: Run full backup
+      command: >
+        docker exec {{ pgbackrest_container }}
+        pgbackrest --stanza={{ backup_stanza_name | default('main') }}
+        --type=full --log-level-console=info backup
+      register: backup_result
+      failed_when: backup_result.rc != 0
+
+    - name: Apply retention
+      command: >
+        docker exec {{ pgbackrest_container }}
+        pgbackrest --stanza={{ backup_stanza_name | default('main') }} expire
+      changed_when: false
+      failed_when: false
+
+    - name: Report backup result
+      debug:
+        msg:
+          - "Full backup completed (exit {{ backup_result.rc }})."
+          - "{{ backup_result.stdout_lines[-5:] | default([]) }}"

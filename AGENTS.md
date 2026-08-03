@@ -51,7 +51,7 @@ Deploys Grafana + Prometheus + Loki + cAdvisor + Node Exporter + Postgres Export
 Installs fail2ban with a Postgres-specific jail that watches `/var/log/postgresql/postgresql.log` for failed auth attempts and bans offending IPs for 24 hours. Three templates: jail, action, and filter configs.
 
 ### Role: backup
-Installs a cron-based S3 backup script (`/usr/local/bin/s3-backup.sh`) that dumps the Supabase database (data-only + schema) via Supabase CLI and uploads compressed archives to any S3-compatible storage via rclone (Docker). One template: `s3-backup.sh.j2`.
+Deploys pgBackRest as a sibling container sharing the Supabase `db` container's PGDATA volume, with continuous WAL archiving, scheduled full + differential backups, point-in-time recovery (`restore.yml`), non-destructive restore verification (`restore-verify.yml`), on-demand backup (`backup.yml`), daily repo-integrity verification, Supabase Storage volume backup, pgsodium root-key backup, and Prometheus metrics + Grafana dashboard + alerting. Repo types: `minio` (local, default), `s3` (external), `posix` (local fs). Encryption is forced ON for external S3 repos. Templates: `pgbackrest.conf.j2`, `docker-compose-backup.yml.j2`, `backup-env.j2`, six `backup-scripts/*.j2`, `grafana/backup.json.j2`, `prometheus-backup-alerts.yml.j2`.
 
 ### Role: ufw
 Configures UFW firewall — always allows SSH (port 22), then applies allow/deny rules from config (supports per-rule IP/CIDR restrictions). One template: `reset_ufw.sh.j2`.

@@ -1,29 +1,253 @@
 ---
+# Backup role — pgBackRest sibling container + WAL archiving + PITR + verify + monitoring
+# Idempotent: re-running does not re-init the stanza or expire backups.
 
-- name: Create backup script from template
-  template:
-    src: s3-backup.sh.j2
-    dest: /usr/local/bin/s3-backup.sh
-    mode: '0755'
-    owner: root
-    group: root
+- name: Assert required variables are set
+  assert:
+    that:
+      - deploy_user is defined
+      - supabase_data_path is defined
+      - backup_repo_type in ['minio', 's3', 'posix']
+      - backup_creds_source in ['env', 'vault']
+    msg: "backup role: required variables missing or invalid"
 
-- name: Create log directory for backup
+- name: Warn loudly when repo is local (no off-box protection)
+  debug:
+    msg: >-
+      WARNING: backup_repo_type is '{{ backup_repo_type }}' (local).
+      A local repo on the same machine provides NO off-box protection.
+      If the server dies, the backups die with it. For real protection,
+      set backup_repo_type to 's3' and point it at an external object store
+      (Cloudflare R2, Backblaze B2, AWS S3, etc.).
+  when: backup_repo_type in ['minio', 'posix']
+
+- name: Warn when credentials are in .env (plaintext)
+  debug:
+    msg: >-
+      WARNING: backup_creds_source is 'env' (default). S3/MinIO credentials
+      are rendered into the backup .env file in plaintext. For production,
+      set backup_creds_source to 'vault' and use Ansible Vault.
+  when: backup_creds_source == 'env'
+
+- name: Warn when restore drill is enabled (resource cost)
+  debug:
+    msg: >-
+      WARNING: backup_restore_drill is enabled. The restore drill performs a
+      full restore into a throwaway volume and starts a second Postgres
+      instance. This requires extra disk space (~1x DB size) and memory.
+      Disable on small VMs with backup_restore_drill: false.
+  when: backup_restore_drill | bool
+
+# --- Create backup directory structure ---
+- name: Create backup directory
   file:
-    path: /var/log/supabase-backup
+    path: "{{ item }}"
     state: directory
-    mode: '0755'
-    owner: root
-    group: root
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0750"
+  loop:
+    - "{{ backup_compose_dir }}"
+    - "{{ backup_compose_dir }}/volumes/pgbackrest"
+    - "{{ backup_compose_dir }}/volumes/pgbackrest-spool"
+    - "{{ backup_compose_dir }}/volumes/pgbackrest-log"
+    - "{{ backup_compose_dir }}/{{ backup_path }}"
+    - "{{ backup_log_dir }}"
+  vars:
+    backup_compose_dir: "/home/{{ deploy_user }}/backup"
 
-- name: Setup cron job for backup
+# --- Render pgBackRest config ---
+- name: Render pgbackrest.conf
+  template:
+    src: pgbackrest.conf.j2
+    dest: "{{ backup_compose_dir }}/pgbackrest.conf"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0640"
+  vars:
+    backup_compose_dir: "/home/{{ deploy_user }}/backup"
+  register: pgbackrest_conf
+
+# --- Render backup compose file ---
+- name: Render backup docker-compose
+  template:
+    src: docker-compose-backup.yml.j2
+    dest: "{{ backup_compose_dir }}/docker-compose.yml"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0640"
+  vars:
+    backup_compose_dir: "/home/{{ deploy_user }}/backup"
+  register: backup_compose
+
+# --- Render .env for backup compose (only when creds_source is env) ---
+- name: Render backup .env (plaintext credentials)
+  template:
+    src: backup-env.j2
+    dest: "{{ backup_compose_dir }}/.env"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0600"
+  vars:
+    backup_compose_dir: "/home/{{ deploy_user }}/backup"
+  when: backup_creds_source == 'env'
+
+# --- Render backup scripts ---
+- name: Render backup scripts
+  template:
+    src: "backup-scripts/{{ item.name }}.j2"
+    dest: "{{ backup_scripts_dir }}/{{ item.name }}"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+  loop:
+    - { name: "backup-full.sh" }
+    - { name: "backup-diff.sh" }
+    - { name: "backup-verify.sh" }
+    - { name: "backup-storage.sh" }
+    - { name: "backup-pgsodium.sh" }
+    - { name: "backup-drill.sh" }
+  loop_control:
+    label: "{{ item.name }}"
+
+# --- Bring up the backup stack (pgbackrest + minio + exporter) ---
+- name: Bring up backup stack
+  command: docker compose up -d
+  args:
+    chdir: "{{ backup_compose_dir }}"
+  vars:
+    backup_compose_dir: "/home/{{ deploy_user }}/backup"
+  changed_when: false
+
+# --- Wait for pgbackrest container to be healthy ---
+- name: Wait for pgbackrest container
+  command: docker inspect --format='{% raw %}{{.State.Running}}{% endraw %}' supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+  register: pgbackrest_running
+  until: pgbackrest_running.stdout == 'true'
+  retries: 10
+  delay: 3
+  changed_when: false
+
+# --- Create stanza (idempotent — pgBackRest skips existing stanzas) ---
+- name: Create pgBackRest stanza
+  command: >
+    docker exec supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+    pgbackrest --stanza={{ backup_stanza_name }} --log-level-console=info stanza-create
+  register: stanza_create_result
+  changed_when: "'already exists' not in stanza_create_result.stdout | default('')"
+  failed_when: false
+
+- name: Check stanza-create result
+  fail:
+    msg: "stanza-create failed: {{ stanza_create_result.stderr | default(stanza_create_result.stdout) }}"
+  when: stanza_create_result.rc | default(0) != 0 and 'already exists' not in (stanza_create_result.stdout | default(''))
+
+# --- Initial full backup on enable ---
+- name: Initial full backup on enable
+  command: >
+    docker exec supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+    pgbackrest --stanza={{ backup_stanza_name }} --type=full --log-level-console=info backup
+  when: backup_initial_on_enable | bool
+  register: initial_backup_result
+  failed_when: initial_backup_result.rc != 0
+
+# --- Cron schedules ---
+- name: Install full backup cron
   cron:
-    name: "Supabase database backup"
-    minute: "{{ backup_cron_minute | default('0') }}"
-    hour: "{{ backup_cron_hour | default('2') }}"
-    day: "{{ backup_cron_day | default('*') }}"
-    month: "{{ backup_cron_month | default('*') }}"
-    weekday: "{{ backup_cron_weekday | default('*') }}"
-    job: "/usr/local/bin/s3-backup.sh -p '{{ postgres_db_pwd }}' -k '{{ s3_access_key }}' -s '{{ s3_secret_key }}' -e '{{ s3_endpoint }}' -n '{{ s3_remote_name }}' -b '{{ s3_bucket_name }}' -v '{{ s3_provider }} -x '{{ exclude_tables }} ' >> /var/log/supabase-backup/backup-$(date +\\%Y\\%m\\%d).log 2>&1"
-    user: root
+    name: "supabase-backup-full"
+    minute: "{{ backup_cron_full.split()[0] }}"
+    hour: "{{ backup_cron_full.split()[1] }}"
+    day: "{{ backup_cron_full.split()[2] }}"
+    month: "{{ backup_cron_full.split()[3] }}"
+    weekday: "{{ backup_cron_full.split()[4] }}"
+    job: "{{ backup_scripts_dir }}/backup-full.sh >> {{ backup_log_dir }}/full.log 2>&1"
     state: present
+
+- name: Install differential backup cron
+  cron:
+    name: "supabase-backup-diff"
+    minute: "{{ backup_cron_diff.split()[0] }}"
+    hour: "{{ backup_cron_diff.split()[1] }}"
+    day: "{{ backup_cron_diff.split()[2] }}"
+    month: "{{ backup_cron_diff.split()[3] }}"
+    weekday: "{{ backup_cron_diff.split()[4] }}"
+    job: "{{ backup_scripts_dir }}/backup-diff.sh >> {{ backup_log_dir }}/diff.log 2>&1"
+    state: present
+
+- name: Install daily verify cron
+  cron:
+    name: "supabase-backup-verify"
+    minute: "{{ backup_cron_verify.split()[0] }}"
+    hour: "{{ backup_cron_verify.split()[1] }}"
+    day: "{{ backup_cron_verify.split()[2] }}"
+    month: "{{ backup_cron_verify.split()[3] }}"
+    weekday: "{{ backup_cron_verify.split()[4] }}"
+    job: "{{ backup_scripts_dir }}/backup-verify.sh >> {{ backup_log_dir }}/verify.log 2>&1"
+    state: present
+  when: backup_repo_check | bool
+
+- name: Install storage backup cron (after full backup)
+  cron:
+    name: "supabase-backup-storage"
+    minute: "30"
+    hour: "3"
+    job: "{{ backup_scripts_dir }}/backup-storage.sh >> {{ backup_log_dir }}/storage.log 2>&1"
+    state: present
+  when: backup_storage_enabled | bool
+
+- name: Install pgsodium key backup cron (after full backup)
+  cron:
+    name: "supabase-backup-pgsodium"
+    minute: "15"
+    hour: "3"
+    job: "{{ backup_scripts_dir }}/backup-pgsodium.sh >> {{ backup_log_dir }}/pgsodium.log 2>&1"
+    state: present
+  when: backup_pgsodium_enabled | bool
+
+- name: Install restore drill cron (opt-in)
+  cron:
+    name: "supabase-backup-drill"
+    minute: "{{ backup_cron_drill.split()[0] }}"
+    hour: "{{ backup_cron_drill.split()[1] }}"
+    day: "{{ backup_cron_drill.split()[2] }}"
+    month: "{{ backup_cron_drill.split()[3] }}"
+    weekday: "{{ backup_cron_drill.split()[4] }}"
+    job: "{{ backup_scripts_dir }}/backup-drill.sh >> {{ backup_log_dir }}/drill.log 2>&1"
+    state: present
+  when: backup_restore_drill | bool
+
+# --- Monitoring integration ---
+- name: Render Prometheus alert rules
+  template:
+    src: prometheus-backup-alerts.yml.j2
+    dest: "/home/{{ deploy_user }}/monitor/prometheus-backup-alerts.yml"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0640"
+  when: backup_monitoring_enabled | bool
+  notify: reload prometheus
+
+- name: Render Grafana dashboard
+  template:
+    src: grafana/backup.json.j2
+    dest: "/home/{{ deploy_user }}/monitor/dashboards/backup.json"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0640"
+  when: backup_monitoring_enabled | bool
+
+# --- Run storage + pgsodium backup once on enable ---
+- name: Run storage backup on enable
+  command: "{{ backup_scripts_dir }}/backup-storage.sh"
+  when: backup_storage_enabled | bool
+  changed_when: false
+  failed_when: false
+
+- name: Run pgsodium key backup on enable
+  command: "{{ backup_scripts_dir }}/backup-pgsodium.sh"
+  when: backup_pgsodium_enabled | bool
+  changed_when: false
+  failed_when: false
+
+# --- Flush handlers ---
+- meta: flush_handlers

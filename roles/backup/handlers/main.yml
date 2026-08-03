@@ -1,0 +1,7 @@
+---
+# Backup role handlers
+
+- name: reload prometheus
+  command: docker exec supabase-prometheus kill -HUP 1
+  changed_when: false
+  failed_when: false

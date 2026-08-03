@@ -1,0 +1,58 @@
+# Managed by Ansible — do not edit manually.
+# pgBackRest configuration for stanza '{{ backup_stanza_name }}'
+
+[global]
+# Repository settings
+repo1-type={{ backup_repo_type if backup_repo_type != 'minio' else 's3' }}
+repo1-path=/{{ minio_bucket_name if backup_repo_type == 'minio' else 'pgbackrest' }}
+{% if backup_repo_type == 'minio' %}
+# Local MinIO (S3-compatible)
+repo1-s3-bucket={{ minio_bucket_name }}
+repo1-s3-endpoint=http://minio:9000
+repo1-s3-region=us-east-1
+repo1-s3-key={{ backup_s3_key | default('minioadmin') }}
+repo1-s3-key-secret={{ backup_s3_key_secret | default('minioadmin') }}
+repo1-s3-uri-style=path
+repo1-s3-verify-tls=n
+{% elif backup_repo_type == 's3' %}
+# External S3-compatible
+repo1-s3-bucket={{ backup_s3_bucket }}
+repo1-s3-endpoint={{ backup_s3_endpoint }}
+repo1-s3-region={{ backup_s3_region }}
+repo1-s3-key={{ backup_s3_key }}
+repo1-s3-key-secret={{ backup_s3_key_secret }}
+repo1-s3-uri-style={{ backup_s3_uri_style }}
+{% if not backup_s3_verify_tls %}repo1-s3-verify-tls=n
+{% endif %}
+{% elif backup_repo_type == 'posix' %}
+# Local filesystem
+{% endif %}
+{% if backup_encryption %}
+# Encryption at rest
+repo1-cipher-type={{ backup_cipher_type }}
+repo1-cipher-pass={{ backup_cipher_pass }}
+{% endif %}
+
+# Retention
+repo1-retention-full={{ backup_retention_full }}
+repo1-retention-diff={{ backup_retention_diff }}
+repo1-retention-archive={{ backup_retention_archive }}
+repo1-retention-archive-type={{ backup_retention_archive_type }}
+
+# Async WAL archiving (fast ack, background push)
+archive-async=y
+spool-path={{ pgbackrest_spool_path }}
+process-max=4
+
+# Logging
+log-level-console=info
+log-level-file=detail
+log-path={{ pgbackrest_log_path }}
+
+# Lock path (avoid /tmp which may be tmpfs)
+lock-path=/var/lib/pgbackrest/lock
+
+[{{ backup_stanza_name }}]
+pg1-path=/var/lib/postgresql/data
+pg1-port=5432
+pg1-user=postgres

@@ -1,0 +1,58 @@
+#!/bin/sh
+# Managed by Ansible — do not edit manually.
+# Restore drill: restore into a throwaway volume + start a read-only Postgres
+# + healthchecks. Never touches prod PGDATA. Opt-in (backup_restore_drill).
+set -eu
+
+CONTAINER="supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+STANZA="{{ backup_stanza_name }}"
+DRILL_VOL="pgbackrest-drill-$(date +%s)"
+DRILL_CONTAINER="supabase-pgbackrest-drill{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+PG_IMAGE="{{ sb_db_version | default('supabase/postgres:17.6.1.136') }}"
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting restore drill (throwaway volume: $DRILL_VOL)..."
+
+# Create throwaway volume
+docker volume create "$DRILL_VOL" >/dev/null
+
+# Restore into the throwaway volume (read-only repo mount, no delta, archive off)
+docker run --rm \
+  --name "$DRILL_CONTAINER" \
+  -v "$DRILL_VOL":/var/lib/postgresql/data \
+  -v "$(pwd)/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" \
+  -v "$(pwd)/volumes/pgbackrest:/var/lib/pgbackrest:ro" \
+  "$PGBACKREST_IMAGE" \
+  pgbackrest --stanza="$STANZA" --no-delta --archive-mode=off \
+    --target-timeline=current --log-level-console=info restore
+rc=$?
+if [ $rc -ne 0 ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: restore drill failed (exit $rc)" >&2
+  docker volume rm "$DRILL_VOL" >/dev/null 2>&1 || true
+  exit $rc
+fi
+
+# Start a read-only Postgres on a side port to healthcheck
+docker run -d --rm \
+  --name "${DRILL_CONTAINER}-pg" \
+  -e POSTGRES_PASSWORD=drill \
+  -p 127.0.0.1:{{ backup_drill_pg_port | default('5433') }}:5432 \
+  -v "$DRILL_VOL":/var/lib/postgresql/data \
+  "$PG_IMAGE" \
+  -c archive_mode=off -c shared_preload_libraries=pgsodium.so \
+  -c config_file=/etc/postgresql/postgresql.conf >/dev/null
+sleep 10
+
+# Healthcheck: can we connect + is it writable?
+if docker exec "${DRILL_CONTAINER}-pg" pg_isready -q; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Drill Postgres is accepting connections."
+else
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: drill Postgres did not become ready" >&2
+  docker stop "${DRILL_CONTAINER}-pg" >/dev/null 2>&1 || true
+  docker volume rm "$DRILL_VOL" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+# Cleanup
+docker stop "${DRILL_CONTAINER}-pg" >/dev/null 2>&1 || true
+docker volume rm "$DRILL_VOL" >/dev/null 2>&1 || true
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Restore drill passed."

@@ -1,0 +1,143 @@
+---
+# restore.yml — PITR restore with guardrails (issue #118 §D)
+#
+# Usage:
+#   ansible-playbook restore.yml -e "target_time='2026-08-01 12:30:00+00'"
+#
+# This playbook is DESTRUCTIVE: it stops supabase-db, overwrites PGDATA via
+# pgbackrest restore, and restarts the db. Guardrails:
+#   1. Refuses to run without target_time (no accidental "restore to now")
+#   2. Requires explicit confirmation (confirm=yes)
+#   3. Takes a fresh full backup of current state BEFORE overwriting
+#   4. Waits for Supabase services to come back healthy
+
+- name: PITR restore — guardrails + pre-restore backup
+  hosts: all
+  become: true
+  vars:
+    backup_compose_dir: "/home/{{ deploy_user }}/backup"
+    pgbackrest_container: "supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+    db_container: "supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+    supabase_compose_dir: "/home/{{ deploy_user }}/supabase"
+
+  tasks:
+    - name: Assert target_time is provided
+      assert:
+        that:
+          - target_time is defined
+          - target_time | length > 0
+        msg: >-
+          target_time is required for PITR restore.
+          Usage: ansible-playbook restore.yml -e "target_time='2026-08-01 12:30:00+00'"
+          Use UTC (+00) to avoid timezone mistakes.
+
+    - name: Display restore parameters
+      debug:
+        msg:
+          - "============================================================"
+          - "  PITR RESTORE — DESTRUCTIVE OPERATION"
+          - "============================================================"
+          - "  Target time:  {{ target_time }}"
+          - "  Current time: {{ ansible_date_time.iso8601 }}"
+          - "  DB container: {{ db_container }}"
+          - "  Stanza:       {{ backup_stanza_name | default('main') }}"
+          - "  Target action: {{ backup_restore_target_action | default('promote') }}"
+          - ""
+          - "  This will:"
+          - "    1. Take a fresh full backup of CURRENT state (last-chance)"
+          - "    2. STOP the database container"
+          - "    3. OVERWRITE PGDATA with the restored data"
+          - "    4. Restart the database"
+          - ""
+          - "  All data written AFTER target_time will be LOST."
+          - "============================================================"
+
+    - name: Require explicit confirmation
+      pause:
+        prompt: >-
+          Type 'yes' to confirm this destructive restore to {{ target_time }}.
+          Anything else aborts.
+      register: restore_confirm
+      when: confirm | default('') != 'yes'
+
+    - name: Abort if not confirmed
+      fail:
+        msg: "Restore aborted — user did not confirm."
+      when:
+        - confirm | default('') != 'yes'
+        - restore_confirm.user_input | default('') != 'yes'
+
+    - name: Take fresh full backup of current state (last-chance)
+      command: >
+        docker exec {{ pgbackrest_container }}
+        pgbackrest --stanza={{ backup_stanza_name | default('main') }}
+        --type=full --log-level-console=info backup
+      register: pre_restore_backup
+      failed_when: pre_restore_backup.rc != 0
+
+    - name: Stop the database container
+      command: docker stop {{ db_container }}
+      register: db_stopped
+      changed_when: true
+
+    - name: Run pgbackrest PITR restore
+      command: >
+        docker exec {{ pgbackrest_container }}
+        pgbackrest --stanza={{ backup_stanza_name | default('main') }}
+        --type=time --target="{{ target_time }}"
+        --target-action={{ backup_restore_target_action | default('promote') }}
+        {{ '--delta' if backup_restore_delta | default(true) | bool else '--no-delta' }}
+        --log-level-console=info restore
+      register: restore_result
+      failed_when: restore_result.rc != 0
+
+    - name: Start the database container
+      command: docker start {{ db_container }}
+      register: db_started
+      changed_when: true
+
+    - name: Wait for database to be ready
+      command: docker exec {{ db_container }} pg_isready -U postgres -h localhost
+      register: db_ready
+      until: db_ready.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    - name: Wait for Supabase Auth to respond
+      uri:
+        url: "http://127.0.0.1:{{ kong_http_port | default('8000') }}/auth/v1/health"
+        method: GET
+        status_code: 200
+      register: auth_health
+      until: auth_health.status == 200
+      retries: 20
+      delay: 5
+      failed_when: false
+
+    - name: Wait for Supabase Storage to respond
+      uri:
+        url: "http://127.0.0.1:{{ kong_http_port | default('8000') }}/storage/v1/health"
+        method: GET
+        status_code: [200, 502]
+      register: storage_health
+      until: storage_health.status == 200
+      retries: 20
+      delay: 5
+      failed_when: false
+
+    - name: Report restore result
+      debug:
+        msg:
+          - "============================================================"
+          - "  RESTORE COMPLETE"
+          - "============================================================"
+          - "  Restored to: {{ target_time }}"
+          - "  DB ready:    {{ db_ready.rc == 0 }}"
+          - "  Auth:        {{ auth_health.status | default('unknown') }}"
+          - "  Storage:     {{ storage_health.status | default('unknown') }}"
+          - ""
+          - "  Pre-restore backup (last-chance) completed successfully."
+          - "  If this restore was a mistake, you can restore from that backup."
+          - "============================================================"
+      when: true

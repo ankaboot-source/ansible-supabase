@@ -1,0 +1,91 @@
+# Managed by Ansible — do not edit manually.
+# Backup stack: pgBackRest sibling container + optional MinIO + exporter
+# Run from: {{ backup_compose_dir | default('/home/' ~ deploy_user ~ '/backup') }}
+
+services:
+  pgbackrest:
+    image: {{ pgbackrest_image }}
+    container_name: supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+    restart: unless-stopped
+    environment:
+      TZ: {{ timezone | default('UTC') }}
+      BACKREST_UID: "{{ pgbackrest_uid }}"
+      BACKREST_GID: "{{ pgbackrest_gid }}"
+    volumes:
+      # Shared PGDATA volume (same as supabase-db, read-write for restore)
+      - {{ supabase_data_path }}:/var/lib/postgresql/data:z
+      # pgBackRest config
+      - ./pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      # pgBackRest repo (for posix type; ignored for s3/minio)
+      - ./volumes/pgbackrest:/var/lib/pgbackrest:z
+      # Spool + logs
+      - ./volumes/pgbackrest-spool:/var/spool/pgbackrest:z
+      - ./volumes/pgbackrest-log:/var/log/pgbackrest:z
+      # Docker socket (for archive_command via docker exec from db container)
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+{% if backup_repo_type == 'minio' %}
+
+  minio:
+    image: {{ minio_image }}
+    container_name: supabase-minio{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":{{ minio_console_port }}"]
+    environment:
+      MINIO_ROOT_USER: {{ backup_s3_key | default('minioadmin') }}
+      MINIO_ROOT_PASSWORD: {{ backup_s3_key_secret | default('minioadmin') }}
+    volumes:
+      - ./volumes/minio:/data:z
+    ports:
+      - 127.0.0.1:{{ minio_api_port }}:9000
+      - 127.0.0.1:{{ minio_console_port }}:9001
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - default
+
+  minio-init:
+    image: {{ minio_mc_image }}
+    container_name: supabase-minio-init{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: on-failure
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      mc alias set local http://minio:9000 '{{ backup_s3_key | default('minioadmin') }}' '{{ backup_s3_key_secret | default('minioadmin') }}';
+      mc mb -p local/{{ minio_bucket_name }};
+      mc anonymous set none local/{{ minio_bucket_name }};
+      exit 0;
+      "
+    networks:
+      - default
+{% endif %}
+{% if backup_monitoring_enabled %}
+
+  pgbackrest-exporter:
+    image: {{ pgbackrest_exporter_image }}
+    container_name: supabase-pgbackrest-exporter{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+    restart: unless-stopped
+    environment:
+      TZ: {{ timezone | default('UTC') }}
+      PGBACKREST_STANZA: {{ backup_stanza_name }}
+    volumes:
+      - ./pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ./volumes/pgbackrest:/var/lib/pgbackrest:z
+      - ./volumes/pgbackrest-log:/var/log/pgbackrest:z
+    ports:
+      - 127.0.0.1:{{ pgbackrest_exporter_port }}:9854
+    networks:
+      - default
+{% endif %}
+
+networks:
+  default:
+    name: supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+    driver: bridge

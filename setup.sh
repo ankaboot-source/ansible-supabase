@@ -164,13 +164,32 @@ fi
 warn_component_placeholders() {
   local warnings=0
   if cfg_bool "components.backup"; then
-    for f in s3_remote_name s3_provider s3_access_key s3_secret_key s3_endpoint s3_bucket_name; do
-      v="$(cfg_get "advanced.backup.$f")"
-      if [[ -z "$v" || "$v" == "changeit" ]]; then
-        warn "components.backup is enabled but advanced.backup.$f is '$v'."
-        warnings=$((warnings + 1))
-      fi
-    done
+    repo_type="$(cfg_get "advanced.backup.repo_type")"
+    [[ -z "$repo_type" ]] && repo_type="minio"
+    # Warn on local repo (no off-box protection)
+    if [[ "$repo_type" == "minio" || "$repo_type" == "posix" ]]; then
+      warn "components.backup: repo_type is '$repo_type' (local) — no off-box protection."
+      warn "  If the server dies, the backups die with it. Use s3 for real protection."
+      warnings=$((warnings + 1))
+    fi
+    # Warn on .env creds (plaintext)
+    creds_source="$(cfg_get "advanced.backup.creds_source")"
+    [[ -z "$creds_source" ]] && creds_source="env"
+    if [[ "$creds_source" == "env" ]]; then
+      warn "components.backup: creds_source is 'env' — credentials in plaintext .env."
+      warn "  Use creds_source: vault for production."
+      warnings=$((warnings + 1))
+    fi
+    # Warn on s3 repo with placeholder creds
+    if [[ "$repo_type" == "s3" ]]; then
+      for f in s3_endpoint s3_bucket s3_access_key s3_secret_key; do
+        v="$(cfg_get "advanced.backup.$f")"
+        if [[ -z "$v" || "$v" == "changeit" ]]; then
+          warn "components.backup is enabled with s3 repo but advanced.backup.$f is '$v'."
+          warnings=$((warnings + 1))
+        fi
+      done
+    fi
   fi
   if cfg_bool "components.caddy"; then
     for f in sso_client_id sso_client_secret; do
@@ -387,14 +406,61 @@ PYEOF
 fi
 
 if cfg_bool "components.backup"; then
-  set_env_var "s3_remote_name"    "$(cfg_get "advanced.backup.s3_remote_name")"
-  set_env_var "s3_provider"       "$(cfg_get "advanced.backup.s3_provider")"
-  set_env_var "s3_access_key"     "$(cfg_get "advanced.backup.s3_access_key")"
-  set_env_var "s3_secret_key"     "$(cfg_get "advanced.backup.s3_secret_key")"
-  set_env_var "s3_endpoint"       "$(cfg_get "advanced.backup.s3_endpoint")"
-  set_env_var "s3_bucket_name"    "$(cfg_get "advanced.backup.s3_bucket_name")"
-  set_env_var "backup_cron_hour"  "$(cfg_get "advanced.backup.backup_cron_hour")"
-  set_env_var "backup_cron_minute" "$(cfg_get "advanced.backup.backup_cron_minute")"
+  set_env_var "backup_enabled" "true"
+  repo_type="$(cfg_get "advanced.backup.repo_type")"
+  [[ -z "$repo_type" ]] && repo_type="minio"
+  set_env_var "backup_repo_type" "$repo_type"
+
+  # S3 repo config
+  set_env_var "backup_s3_endpoint" "$(cfg_get "advanced.backup.s3_endpoint")"
+  set_env_var "backup_s3_region" "$(cfg_get "advanced.backup.s3_region")"
+  set_env_var "backup_s3_bucket" "$(cfg_get "advanced.backup.s3_bucket")"
+  set_env_var "backup_s3_key" "$(cfg_get "advanced.backup.s3_access_key")"
+  set_env_var "backup_s3_key_secret" "$(cfg_get "advanced.backup.s3_secret_key")"
+  set_env_var "backup_s3_uri_style" "$(cfg_get "advanced.backup.s3_uri_style")"
+  s3_verify="$(cfg_get "advanced.backup.s3_verify_tls")"
+  [[ -z "$s3_verify" ]] && s3_verify="true"
+  set_env_var "backup_s3_verify_tls" "$s3_verify"
+
+  # MinIO creds (for local repo)
+  set_env_var "minio_root_user" "$(cfg_get "advanced.backup.minio_root_user")"
+  set_env_var "minio_root_password" "$(cfg_get "advanced.backup.minio_root_password")"
+
+  # Encryption — forced ON for external (s3) repo
+  encryption="$(cfg_get "advanced.backup.encryption")"
+  [[ -z "$encryption" ]] && encryption="false"
+  if [[ "$repo_type" == "s3" ]]; then
+    encryption="true"
+    log "Forcing backup_encryption=true for external s3 repo."
+  fi
+  set_env_var "backup_encryption" "$encryption"
+  if [[ "$encryption" == "true" ]]; then
+    # Generate a cipher passphrase if not already set
+    cipher_pass="$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")"
+    set_env_var "backup_cipher_pass" "$cipher_pass"
+    warn "backup_encryption is ON. Cipher passphrase generated and stored in env/supabase.yml."
+    warn "  STORE THIS OFF THE SERVER (password manager). If lost, backups are unrecoverable."
+  fi
+
+  # Credentials source
+  set_env_var "backup_creds_source" "$(cfg_get "advanced.backup.creds_source")"
+
+  # Retention
+  set_env_var "backup_retention_full" "$(cfg_get "advanced.backup.retention_full")"
+  set_env_var "backup_retention_diff" "$(cfg_get "advanced.backup.retention_diff")"
+  set_env_var "backup_retention_archive" "$(cfg_get "advanced.backup.retention_archive")"
+
+  # Schedules
+  set_env_var "backup_cron_full" "$(cfg_get "advanced.backup.cron_full")"
+  set_env_var "backup_cron_diff" "$(cfg_get "advanced.backup.cron_diff")"
+  set_env_var "backup_cron_verify" "$(cfg_get "advanced.backup.cron_verify")"
+
+  # Restore drill
+  set_env_var "backup_restore_drill" "$(cfg_get "advanced.backup.restore_drill")"
+
+  # Storage + pgsodium backup
+  set_env_var "backup_storage_enabled" "$(cfg_get "advanced.backup.storage_backup")"
+  set_env_var "backup_pgsodium_enabled" "$(cfg_get "advanced.backup.pgsodium_backup")"
 fi
 
 if cfg_bool "components.luks"; then
@@ -463,7 +529,7 @@ if components.get("monitor"):
 if components.get("fail2ban"):
     role_lines.append("   - fail2ban                # Brute-force protection for Postgres")
 if components.get("backup"):
-    role_lines.append("   - backup                  # Automated S3-compatible backups")
+    role_lines.append("   - backup                  # Automated backups + PITR (pgBackRest)")
 
 content = header
 if role_lines:

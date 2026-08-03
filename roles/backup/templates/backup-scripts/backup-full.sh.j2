@@ -1,0 +1,18 @@
+#!/bin/sh
+# Managed by Ansible — do not edit manually.
+# On-demand full backup: pgbackrest --stanza=main backup --type=full
+set -eu
+
+CONTAINER="supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+STANZA="{{ backup_stanza_name }}"
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting full backup..."
+docker exec "$CONTAINER" pgbackrest --stanza="$STANZA" --type=full --log-level-console=info backup
+rc=$?
+if [ $rc -ne 0 ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: full backup failed (exit $rc)" >&2
+  exit $rc
+fi
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Full backup completed."
+docker exec "$CONTAINER" pgbackrest --stanza="$STANZA" expire
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Retention applied."

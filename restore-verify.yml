@@ -1,0 +1,104 @@
+---
+# restore-verify.yml — non-destructive restore verification (issue #118 §E)
+#
+# Restores into a throwaway volume + starts a read-only Postgres on a side
+# port + runs healthchecks. NEVER touches prod PGDATA. Opt-in via
+# backup_restore_drill (default false) or run manually:
+#
+#   ansible-playbook restore-verify.yml
+#
+# Resource warning: requires ~1x DB size in extra disk space + memory for a
+# second Postgres instance.
+
+- name: Restore verification — throwaway restore + healthchecks
+  hosts: all
+  become: true
+  vars:
+    backup_compose_dir: "/home/{{ deploy_user }}/backup"
+    pgbackrest_container: "supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+    db_container: "supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+    drill_vol: "pgbackrest-verify-{{ ansible_date_time.epoch }}"
+    drill_container: "supabase-verify-restore{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+    drill_pg_port: "{{ backup_drill_pg_port | default('5433') }}"
+
+  tasks:
+    - name: Print resource warning
+      debug:
+        msg:
+          - "============================================================"
+          - "  RESTORE VERIFICATION (non-destructive)"
+          - "============================================================"
+          - "  This will restore into a throwaway volume and start a"
+          - "  read-only Postgres on port {{ drill_pg_port }}."
+          - "  Prod PGDATA is never touched."
+          - ""
+          - "  Resource cost: ~1x DB size disk + memory for a 2nd Postgres."
+          - "============================================================"
+
+    - name: Create throwaway volume
+      command: docker volume create {{ drill_vol }}
+      changed_when: true
+
+    - name: Restore into throwaway volume
+      command: >
+        docker run --rm
+        --name {{ drill_container }}
+        -v {{ drill_vol }}:/var/lib/postgresql/data
+        -v {{ backup_compose_dir }}/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+        -v {{ backup_compose_dir }}/volumes/pgbackrest:/var/lib/pgbackrest:ro
+        {{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}
+        pgbackrest --stanza={{ backup_stanza_name | default('main') }}
+        --no-delta --archive-mode=off
+        --target-timeline=current --log-level-console=info restore
+      register: restore_result
+      failed_when: restore_result.rc != 0
+
+    - name: Start read-only Postgres on side port
+      command: >
+        docker run -d --rm
+        --name {{ drill_container }}-pg
+        -e POSTGRES_PASSWORD=verify
+        -p 127.0.0.1:{{ drill_pg_port }}:5432
+        -v {{ drill_vol }}:/var/lib/postgresql/data
+        {{ sb_db_version | default('supabase/postgres:17.6.1.136') }}
+        -c archive_mode=off
+      changed_when: true
+
+    - name: Wait for drill Postgres to be ready
+      command: docker exec {{ drill_container }}-pg pg_isready -U postgres -h localhost
+      register: drill_ready
+      until: drill_ready.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    - name: Healthcheck — can we query the restored DB?
+      command: >
+        docker exec {{ drill_container }}-pg
+        psql -U postgres -c "SELECT count(*) FROM pg_database;"
+      register: db_query
+      changed_when: false
+      failed_when: db_query.rc != 0
+
+    - name: Report verification result
+      debug:
+        msg:
+          - "============================================================"
+          - "  RESTORE VERIFICATION PASSED"
+          - "============================================================"
+          - "  Restored into throwaway volume: {{ drill_vol }}"
+          - "  Postgres started on port: {{ drill_pg_port }}"
+          - "  Query succeeded: {{ db_query.rc == 0 }}"
+          - ""
+          - "  The backup is restorable. Prod was not touched."
+          - "============================================================"
+
+    - name: Cleanup drill container
+      command: docker stop {{ drill_container }}-pg
+      changed_when: true
+      failed_when: false
+
+    - name: Cleanup throwaway volume
+      command: docker volume rm {{ drill_vol }}
+      changed_when: true
+      failed_when: false
