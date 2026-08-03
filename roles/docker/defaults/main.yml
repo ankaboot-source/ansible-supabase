@@ -5,3 +5,4 @@ log_max_file: 3
 docker_dns: []
 containers_to_destroy: []
 docker_disable_iptables: false
+docker_os_family: debian

@@ -431,20 +431,44 @@ with open(cfg_path) as f:
     cfg = yaml.safe_load(f)
 components = cfg.get("components", {}) or {}
 
-# Preserve the original header (everything up to and including the supabase
-# prerequisite role + the advanced-roles banner comment), then append the
-# enabled roles in a fixed canonical order.
-with open(path) as f:
-    original = f.read()
+# Build the new playbook. The bootstrap play runs first with gather_facts: false
+# to install Python on minimal cloud images / Arch (which ships `python` only),
+# then the main play runs the always-on roles (docker, supabase, manifest,
+# agent_access) followed by the enabled advanced roles in a fixed canonical
+# order. The manifest + agent_access roles are always-on (not component-toggled)
+# because the instance manifest is a contract and SSH-stdio agent access is
+# part of the default deployment.
 
-# Build the new roles list. Prerequisites are always present.
-header = """---
+bootstrap_play = """---
+# Bootstrap Python on minimal targets before anything else.
+# Arch ships `python` only; minimal Ubuntu cloud images may ship no python3.
+# gather_facts: false + raw bootstrap keeps this distro-independent.
+- hosts: localhost
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Bootstrap Python (Debian family)
+      ansible.builtin.raw: |
+        apt-get update -qq &&
+        apt-get install -y -qq python3 python3-apt
+      when: ansible_os_family is undefined
+
+    - name: Bootstrap Python (Arch)
+      ansible.builtin.raw: |
+        pacman -Sy --noconfirm python
+      when: ansible_os_family is undefined
+
+"""
+
+main_play_header = """---
 - hosts: localhost
   become: true
   roles:
-   # Prerequisite — always needed
-   - docker
-   - supabase
+   # ─── Always-on (prerequisites + instance contract) ───
+   - docker                    # Docker Engine + Compose v2 (Debian family + Arch)
+   - supabase                  # Full Supabase stack
+   - manifest                  # /etc/supabase/instance.json — instance contract
+   - agent_access              # SSH-stdio MCP agent + info CLI
 
    # ─── Advanced Roles ───────────────────────────────
    # Enabled via config.yml (components). See docs/advanced-docs.md.
@@ -465,7 +489,7 @@ if components.get("fail2ban"):
 if components.get("backup"):
     role_lines.append("   - backup                  # Automated S3-compatible backups")
 
-content = header
+content = bootstrap_play + main_play_header
 if role_lines:
     content += "\n".join(role_lines) + "\n"
 else:

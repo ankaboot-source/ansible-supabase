@@ -1,0 +1,10 @@
+---
+# Constants for the instance manifest. These are NOT user-configurable.
+# The manifest path is hardwired to /etc/supabase/instance.json — see tasks/main.yml.
+manifest_schema_version: 1
+manifest_generated_by: "ansible-supabase 0.4.1"
+# Display version for the manifest. There is no single "supabase" image tag,
+# so we surface the Postgres image tag (which is versioned alongside the
+# rest of the stack). Stripped of the "supabase/" registry prefix so the
+# manifest shows a clean semver-ish string, not a docker image reference.
+sb_db: "postgres:17.6.1.136"
