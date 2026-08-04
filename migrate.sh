@@ -211,7 +211,7 @@ if [[ $DRY_RUN -eq 1 ]]; then
   log "  Phase 1: pg_dump source → pg_restore target (schema + data)"
   log "    source DSN: ${SRC_DB_URL}"
   log "    target DSN: ${TGT_DB_URL}"
-  log "    schemas: auto-discovered (all non-system schemas)"
+  log "    schemas: auto-discovered (excluding Supabase system schemas: auth, storage, realtime, etc.)"
   log "  Phase 2: pg_dump auth.users + auth.identities → pg_restore target (UUIDs preserved)"
   log "  Phase 3: rclone copy source-storage → target-storage (read-only against source)"
   log "  Phase 4: print manual-steps report"
@@ -259,14 +259,17 @@ ok "Target is empty."
 # ─── Phase 1: Database — schema + data ────────────────────────────────────────
 log "Phase 1: dumping and restoring schema + data…"
 
-# Probe source for all schemas, excluding only Postgres built-in + temporary
-# system schemas (pg_temp_N, pg_toast_temp_N). Supabase system schemas like
-# auth, storage, realtime, extensions, etc. ARE included — their DDL produces
-# harmless "already exists" errors on the target, but their data comes across.
-log "  probing source schemas…"
+# Probe source for user schemas only — exclude Postgres built-in, temporary
+# system schemas, and Supabase-managed schemas (auth, storage, realtime, etc.)
+# that are already provisioned by the self-hosted stack. User data from auth
+# and storage is handled by Phase 2 and Phase 3 respectively.
+log "  probing source schemas (excluding Supabase system schemas)…"
 source_schemas=$("$PSQL" "$SRC_DB_URL" -tAX \
   -c "SELECT schema_name FROM information_schema.schemata
-      WHERE schema_name NOT IN ('pg_catalog','information_schema','pg_toast')
+      WHERE schema_name NOT IN (
+              'pg_catalog','information_schema','pg_toast',
+              'auth','storage','realtime','extensions',
+              'graphql','graphql_public','pgbouncer','vault','pgsodium')
         AND schema_name NOT LIKE 'pg\_temp\_%'
         AND schema_name NOT LIKE 'pg\_toast\_temp\_%'
       ORDER BY schema_name;" 2>"$LOG_DIR/probe.err") \
@@ -278,7 +281,7 @@ while IFS= read -r s; do
 done <<< "$source_schemas"
 
 [[ ${#SCHEMA_FLAGS[@]} -eq 0 ]] && die "no schemas found on source — nothing to migrate."
-log "  schemas to migrate: ${SCHEMA_FLAGS[*]}"
+log "  schemas to migrate (user schemas only): ${SCHEMA_FLAGS[*]}"
 
 DUMP_FILE="$(mktemp -t migrate-dump-XXXXXX.dump)"
 log "  dumping database…"
