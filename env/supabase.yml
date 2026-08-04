@@ -227,6 +227,10 @@ fail2ban_service: fail2ban
 # Master toggle (set by setup.sh from components.backup)
 backup_enabled: false
 
+# Shared WAL spool host path (absolute — both supabase-db and pgbackrest containers mount this)
+# Set by setup.sh from deploy_user. Must be an absolute host path shared between composes.
+backup_spool_host_path: changeit
+
 # Repository type: minio (local, default) | s3 (external) | posix (local fs)
 backup_repo_type: minio
 

@@ -112,6 +112,19 @@
     - { path: "{{ postgres_cert_path }}/server.key", mode: "0600" }
     - { path: "{{ postgres_cert_path }}/server.crt", mode: "0644" }
 
+- name: Create WAL archive spool directories (backup role prerequisite)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0777"
+  loop:
+    - "{{ backup_spool_host_path }}/in"
+    - "{{ backup_spool_host_path }}/failed"
+  when: backup_enabled | default(false) | bool
+  changed_when: false
+
 - name: Create Supabase files
   template:
     src: "{{ item.src }}.j2"

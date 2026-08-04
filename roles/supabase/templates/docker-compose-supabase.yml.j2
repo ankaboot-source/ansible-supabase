@@ -517,7 +517,7 @@ services:
         "-c",
         "ssl_cert_file=/etc/postgres/certs/server.crt",
         "-c",
-        "ssl_key_file=/etc/postgres/certs/server.key"{{ ', "-c", "archive_mode=on", "-c", "archive_command=docker exec supabase-pgbackrest' + ('-' + deploy_env if deploy_env != 'changeit' else '') + ' pgbackrest --stanza=' + (backup_stanza_name | default('main')) + ' archive-push %p"' if backup_enabled | default(false) | bool else '' }}
+        "ssl_key_file=/etc/postgres/certs/server.key"{{ ', "-c", "archive_mode=on", "-c", "archive_command=cp %p ' + (backup_spool_host_path | default('/var/spool/pgbackrest')) + '/in/%f"' if backup_enabled | default(false) | bool else '' }}
       ]
     restart: unless-stopped
     ports:
@@ -555,7 +555,7 @@ services:
       - /var/log/postgresql:/var/log/postgresql:Z
       # Mount SSL certs
       - /opt/postgres-certs:/etc/postgres/certs:ro
-      {{ '- /var/run/docker.sock:/var/run/docker.sock  # archive_command via docker exec (backup role)' if backup_enabled | default(false) | bool else '' }}{{ '\n      - /usr/bin/docker:/usr/bin/docker:ro  # docker CLI for archive_command (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- ' + backup_spool_host_path + ':/var/spool/pgbackrest:rw  # WAL archive spool (backup role)' if backup_enabled | default(false) | bool else '' }}
 
   # Update the DATABASE_URL if you are using an external Postgres database
 

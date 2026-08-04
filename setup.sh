@@ -407,6 +407,9 @@ fi
 
 if cfg_bool "components.backup"; then
   set_env_var "backup_enabled" "true"
+  # Shared WAL spool — absolute host path used by both supabase-db and pgbackrest containers
+  backup_user="$(cfg_get "required.deploy_user")"
+  set_env_var "backup_spool_host_path" "/home/${backup_user}/backup/volumes/pgbackrest-spool"
   repo_type="$(cfg_get "advanced.backup.repo_type")"
   [[ -z "$repo_type" ]] && repo_type="minio"
   set_env_var "backup_repo_type" "$repo_type"

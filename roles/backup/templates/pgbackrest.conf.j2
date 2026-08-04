@@ -39,10 +39,8 @@ repo1-retention-diff={{ backup_retention_diff }}
 repo1-retention-archive={{ backup_retention_archive }}
 repo1-retention-archive-type={{ backup_retention_archive_type }}
 
-# Async WAL archiving (fast ack, background push)
-archive-async=y
-spool-path={{ pgbackrest_spool_path }}
-process-max=4
+# WAL archiving is handled externally by backup-archiver.sh (shared spool dir)
+# archive-async is not needed — the watcher script calls archive-push directly.
 
 # Logging
 log-level-console=info

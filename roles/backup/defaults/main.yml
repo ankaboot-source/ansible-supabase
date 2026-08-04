@@ -60,7 +60,6 @@ pgbackrest_uid: 2001
 pgbackrest_gid: 2001
 pgbackrest_conf_path: "/etc/pgbackrest"
 pgbackrest_repo_path: "/var/lib/pgbackrest"
-pgbackrest_spool_path: "/var/spool/pgbackrest"
 pgbackrest_log_path: "/var/log/pgbackrest"
 
 # --- Exporter ---

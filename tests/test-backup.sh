@@ -195,11 +195,11 @@ fi
 echo "TC-BACKUP-009: supabase compose has archive_command when backup enabled"
 COMPOSE="$WORKTREE/roles/supabase/templates/docker-compose-supabase.yml.j2"
 if grep -q "archive_mode=on" "$COMPOSE" \
-  && grep -q "archive_command" "$COMPOSE" \
-  && grep -q "docker.sock" "$COMPOSE"; then
-  ok "archive_command + docker.sock present in compose template"
+  && grep -q "archive_command=cp" "$COMPOSE" \
+  && grep -q "backup_spool_host_path" "$COMPOSE"; then
+  ok "archive_command + spool mount present in compose template"
 else
-  fail "archive_command or docker.sock missing from compose template"
+  fail "archive_command or spool mount missing from compose template"
 fi
 
 # ─── TC-BACKUP-023: grafana dashboard wraps {{label}} in raw ────────────────
@@ -356,13 +356,14 @@ else
   fail "pgsodium script still uses docker compose run"
 fi
 
-# ─── TC-BACKUP-036: db container mounts docker binary when backup enabled ────
-echo "TC-BACKUP-036: db container mounts docker binary when backup enabled"
+# ─── TC-BACKUP-036: db container does NOT mount docker binary (no docker socket) ──
+echo "TC-BACKUP-036: db container does NOT mount docker binary (no docker socket)"
 COMPOSE="$WORKTREE/roles/supabase/templates/docker-compose-supabase.yml.j2"
-if grep -q "/usr/bin/docker:/usr/bin/docker:ro" "$COMPOSE"; then
-  ok "db container bind-mounts docker binary"
+if ! grep -q "/usr/bin/docker:/usr/bin/docker:ro" "$COMPOSE" \
+  && ! grep -q "/var/run/docker.sock:/var/run/docker.sock" "$COMPOSE"; then
+  ok "db container does not bind-mount docker binary or socket"
 else
-  fail "db container does not bind-mount docker binary"
+  fail "db container still has docker socket/binary mount (should be removed)"
 fi
 
 # ─── TC-BACKUP-037: restore.yml pre-restore backup is best-effort ───────────
