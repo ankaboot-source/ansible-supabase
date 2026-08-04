@@ -13,8 +13,6 @@ services:
       TZ: {{ timezone | default('UTC') }}
       BACKREST_UID: "{{ pgbackrest_uid }}"
       BACKREST_GID: "{{ pgbackrest_gid }}"
-    entrypoint: ["/bin/sh", "/usr/local/bin/backup-archiver.sh"]
-    command: []
     volumes:
       # Shared PGDATA volume (same as supabase-db, read-write for restore)
       - {{ supabase_data_path }}:/var/lib/postgresql/data:z
@@ -22,12 +20,8 @@ services:
       - ./pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
       # pgBackRest repo (for posix type; ignored for s3/minio)
       - ./volumes/pgbackrest:/var/lib/pgbackrest:z
-      # Shared WAL spool (same host path as supabase-db mounts)
-      - {{ backup_spool_host_path }}:/var/spool/pgbackrest:z
       # Logs
       - ./volumes/pgbackrest-log:/var/log/pgbackrest:z
-      # WAL archiver sidecar script
-      - ./backup-archiver.sh:/usr/local/bin/backup-archiver.sh:ro
     networks:
       - default
 {% if backup_repo_type == 'minio' %}

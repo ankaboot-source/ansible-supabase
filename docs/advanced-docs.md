@@ -302,7 +302,7 @@ Automated backups + continuous WAL archiving + point-in-time recovery (PITR) via
 ### How it works
 
 - **pgBackRest** runs as a sibling container (`supabase-pgbackrest`) alongside `supabase-db`, sharing the PGDATA volume.
-- **Continuous WAL archiving**: Postgres `archive_command` pushes WAL segments to the backup repo via `docker exec`.
+- **Continuous WAL archiving**: Postgres `archive_command` runs `pgbackrest archive-push %p` directly in the db container (binary mounted read-only). pgBackRest uses `archive-async=y` with its own internal spool for queueing and retry.
 - **Scheduled backups**: full (weekly) + differential (daily) via cron.
 - **PITR**: restore to any point in time covered by the WAL archive.
 - **Verification**: daily `pgbackrest verify` (cheap integrity check); optional restore drill (full restore into throwaway volume).

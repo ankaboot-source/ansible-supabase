@@ -65,13 +65,13 @@ Tests are shell-level (matching `tests/test-setup.sh` / `tests/test-migrate.sh` 
 
 **Given** `backup_enabled: true`.
 **When** `docker-compose-supabase.yml.j2` is rendered.
-**Then** the `db` service command contains `-c archive_mode=on` and `-c archive_command='docker exec supabase-pgbackrest pgbackrest --stanza=main archive-push %p'`, and the db service mounts `/var/run/docker.sock:/var/run/docker.sock`.
+**Then** the `db` service command contains `-c archive_mode=on` and `-c archive_command=pgbackrest --stanza=main archive-push %p`, the db service mounts `/usr/bin/pgbackrest:/usr/bin/pgbackrest:ro` and the pgbackrest config, and joins the backup network.
 
 ## TC-BACKUP-010: supabase compose omits archive_command when backup disabled
 
 **Given** `backup_enabled: false`.
 **When** `docker-compose-supabase.yml.j2` is rendered.
-**Then** the `db` service command does **not** contain `archive_mode` or `archive_command`, and does **not** mount the docker socket.
+**Then** the `db` service command does **not** contain `archive_mode` or `archive_command`, does **not** mount pgbackrest, and does **not** join the backup network.
 
 ## TC-BACKUP-011: stanza-create is called once on enable
 

@@ -26,11 +26,10 @@ Give `ansible-supabase` a default-on backup story: a Postgres that backs itself 
 │  │                  │        │                           │   │
 │  │  PGDATA ─────────┼────────┼── PGDATA (shared volume)  │   │
 │  │  archive_command │        │  stanza-create            │   │
-│  │  = docker exec   │        │  backup / expire / verify │   │
-│  │    supabase-     │        │  exporter :9854           │   │
-│  │    pgbackrest    │        │                           │   │
-│  │    archive-push  │        │                           │   │
-│  │  docker.sock ────┤        │                           │   │
+│  │  = pgbackrest    │        │  backup / expire / verify │   │
+│  │    archive-push  │        │  exporter :9854           │   │
+│  │  (binary mounted │        │                           │   │
+│  │   read-only)     │        │                           │   │
 │  └──────────────────┘        └──────────────┬────────────┘   │
 │                                             │                 │
 │  ┌──────────────────────────────────────────▼─────────────┐  │
@@ -49,10 +48,12 @@ Give `ansible-supabase` a default-on backup story: a Postgres that backs itself 
 ### `archive_command` approach
 
 ```
-archive_command = 'docker exec supabase-pgbackrest pgbackrest --stanza=main archive-push %p'
+archive_command = 'pgbackrest --stanza=main archive-push %p'
 ```
 
-This requires the Docker socket mounted into the `db` container. Trade-off: the db container gains the ability to run `docker exec` (= host root). Acceptable for a single-VPS self-hosted setup; documented in the role's output and in `docs/advanced-docs.md`. The alternative (bind-mounting the pgbackrest binary from a sidecar image) was rejected due to glibc/musl ABI incompatibility between Alpine (pgbackrest image) and the Ubuntu-based `supabase/postgres` image.
+The pgbackrest binary is bind-mounted read-only from the `woblerr/pgbackrest` image into the `db` container. Both containers are Alpine-based (musl libc, x86_64), so the binary is directly compatible. pgBackRest uses `archive-async=y` with its own internal spool for queueing and retry — no docker socket dependency, no custom archiver script. The pgbackrest sibling container runs the default entrypoint and handles on-demand backups, stanza management, and repo access.
+
+Trade-off: the db container holds the pgbackrest config (with repo credentials) and needs network egress to the repo. This is a notch below TLS server mode (where creds stay on the sibling) but nowhere near docker.sock. TLS mode is the clean v2 if we want creds off the db container.
 
 ## Repo types
 

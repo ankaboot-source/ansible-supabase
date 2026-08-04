@@ -39,8 +39,9 @@ repo1-retention-diff={{ backup_retention_diff }}
 repo1-retention-archive={{ backup_retention_archive }}
 repo1-retention-archive-type={{ backup_retention_archive_type }}
 
-# WAL archiving is handled externally by backup-archiver.sh (shared spool dir)
-# archive-async is not needed — the watcher script calls archive-push directly.
+# WAL archiving (async — db container runs archive-push, spool is managed by pgBackRest)
+archive-async=y
+archive-push-queue-max=128MB
 
 # Logging
 log-level-console=info

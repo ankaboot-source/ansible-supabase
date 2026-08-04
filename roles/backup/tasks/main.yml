@@ -7,8 +7,7 @@
     that:
       - deploy_user is defined
       - supabase_data_path is defined
-      - backup_spool_host_path is defined
-      - backup_spool_host_path | length > 0
+      - backup_stanza_name is defined
       - backup_repo_type in ['minio', 's3', 'posix']
       - backup_creds_source in ['env', 'vault']
     msg: "backup role: required variables missing or invalid"
@@ -56,21 +55,6 @@
     - "{{ backup_log_dir }}"
   vars:
     backup_compose_dir: "/home/{{ deploy_user }}/backup"
-
-# --- Create WAL archive spool dirs (shared with supabase-db container) ---
-# These must be accessible by both the db container (uid 100) and pgbackrest (uid 2001).
-# Mode 0777 allows cross-uid writes — acceptable for a staging directory.
-- name: Create WAL archive spool directories
-  file:
-    path: "{{ backup_spool_host_path }}/{{ item }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0777"
-  loop:
-    - ""
-    - "in"
-    - "failed"
 
 # --- Render pgBackRest config ---
 - name: Render pgbackrest.conf
@@ -127,17 +111,6 @@
     - { name: "backup-drill.sh" }
   loop_control:
     label: "{{ item.name }}"
-
-# --- Render WAL archiver sidecar script (mounted into pgbackrest container) ---
-- name: Render WAL archiver script
-  template:
-    src: backup-scripts/backup-archiver.sh.j2
-    dest: "{{ backup_compose_dir }}/backup-archiver.sh"
-    owner: "{{ deploy_user }}"
-    group: "{{ deploy_user }}"
-    mode: "0755"
-  vars:
-    backup_compose_dir: "/home/{{ deploy_user }}/backup"
 
 # --- Bring up the backup stack (pgbackrest + minio + exporter) ---
 - name: Bring up backup stack

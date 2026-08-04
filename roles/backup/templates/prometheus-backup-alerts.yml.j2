@@ -54,7 +54,7 @@ groups:
           severity: critical
         annotations:
           summary: "PGDATA filesystem is over 85% full"
-          description: "Only {{ '{{' }} $value | humanizePercentage {{ '}}' }} free on {{ supabase_data_path }}. If archive_command is failing, pg_wal will fill this."
+          description: "Only {{ '{{' }} $value | humanizePercentage {{ '}}' }} free on {{ supabase_data_path }}. If archive-push is failing, pg_wal and the async spool will fill this."
 
       # --- Verify failure ---
       - alert: PgBackRestVerifyFailed

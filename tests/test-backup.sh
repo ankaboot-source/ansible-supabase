@@ -195,11 +195,11 @@ fi
 echo "TC-BACKUP-009: supabase compose has archive_command when backup enabled"
 COMPOSE="$WORKTREE/roles/supabase/templates/docker-compose-supabase.yml.j2"
 if grep -q "archive_mode=on" "$COMPOSE" \
-  && grep -q "archive_command=cp" "$COMPOSE" \
-  && grep -q "backup_spool_host_path" "$COMPOSE"; then
-  ok "archive_command + spool mount present in compose template"
+  && grep -q "archive_command=pgbackrest" "$COMPOSE" \
+  && grep -q "pgbackrest.conf" "$COMPOSE"; then
+  ok "archive_command + pgbackrest mounts present in compose template"
 else
-  fail "archive_command or spool mount missing from compose template"
+  fail "archive_command or pgbackrest mounts missing from compose template"
 fi
 
 # ─── TC-BACKUP-023: grafana dashboard wraps {{label}} in raw ────────────────
@@ -364,6 +364,16 @@ if ! grep -q "/usr/bin/docker:/usr/bin/docker:ro" "$COMPOSE" \
   ok "db container does not bind-mount docker binary or socket"
 else
   fail "db container still has docker socket/binary mount (should be removed)"
+fi
+
+# ─── TC-BACKUP-039: db container mounts pgbackrest binary + config (not spool) ──
+echo "TC-BACKUP-039: db container mounts pgbackrest binary + config (not spool)"
+if grep -q "/usr/bin/pgbackrest:/usr/bin/pgbackrest:ro" "$COMPOSE" \
+  && grep -q "pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" "$COMPOSE" \
+  && ! grep -q "backup_spool_host_path" "$COMPOSE"; then
+  ok "db container mounts pgbackrest binary + config, no spool"
+else
+  fail "db container missing pgbackrest mounts or still has spool mount"
 fi
 
 # ─── TC-BACKUP-037: restore.yml pre-restore backup is best-effort ───────────
