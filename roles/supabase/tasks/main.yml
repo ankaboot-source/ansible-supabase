@@ -129,5 +129,13 @@
     docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || docker network create "$NETWORK_NAME"
   when: backup_enabled | default(false) | bool
 
+- name: Ensure pgbackrest.conf exists for backup mount
+  copy:
+    content: ""
+    dest: "/home/{{ deploy_user }}/backup/pgbackrest.conf"
+    force: false
+    mode: "0640"
+  when: backup_enabled | default(false) | bool
+
 - name: Start Supabase
   command: "bash /home/{{ deploy_user }}/{{ supabase_path }}/start-supabase.sh"
