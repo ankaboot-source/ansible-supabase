@@ -31,6 +31,8 @@
     - { src: "home.json", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/home.json", mode: '0664' }
 
 
-- name: Start monitor instances
+- name: Restart monitor instances
   become: yes
-  ansible.builtin.shell: docker compose -f /home/"{{ deploy_user }}"/"{{ monitor_path }}"/docker-compose-monitor.yml down && docker compose -f /home/"{{ deploy_user }}"/"{{ monitor_path }}"/docker-compose-monitor.yml up -d
+  ansible.builtin.shell: |
+    docker compose -f /home/{{ deploy_user }}/{{ monitor_path }}/docker-compose-monitor.yml down
+    docker compose -f /home/{{ deploy_user }}/{{ monitor_path }}/docker-compose-monitor.yml up -d
