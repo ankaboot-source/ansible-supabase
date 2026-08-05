@@ -123,5 +123,11 @@
     - { src: "env-supabase", dest: "/home/{{ deploy_user }}/{{ supabase_path }}/.env", mode: '0664' }
     - { src: "start-supabase.sh", dest: "/home/{{ deploy_user }}/{{ supabase_path }}/start-supabase.sh", mode: '0755' }
 
+- name: Create backup network if needed
+  shell: |
+    NETWORK_NAME="supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+    docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || docker network create "$NETWORK_NAME"
+  when: backup_enabled | default(false) | bool
+
 - name: Start Supabase
   command: "bash /home/{{ deploy_user }}/{{ supabase_path }}/start-supabase.sh"
