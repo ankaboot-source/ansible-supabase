@@ -3,7 +3,7 @@
 # On-demand differential backup: pgbackrest --stanza=main backup --type=diff
 set -eu
 
-CONTAINER="supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+CONTAINER="supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
 STANZA="{{ backup_stanza_name }}"
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting differential backup..."

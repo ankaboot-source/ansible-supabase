@@ -7,7 +7,7 @@ set -eu
 BACKUP_DIR="/home/{{ deploy_user }}/backup"
 cd "$BACKUP_DIR"
 
-CONTAINER="supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+CONTAINER="supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
 STANZA="{{ backup_stanza_name }}"
 DRILL_VOL="pgbackrest-drill-$(date +%s)"
 DRILL_CONTAINER="supabase-pgbackrest-drill{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"

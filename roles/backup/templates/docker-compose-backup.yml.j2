@@ -1,31 +1,9 @@
 # Managed by Ansible — do not edit manually.
-# Backup stack: pgBackRest sibling container + optional MinIO + exporter
+# Backup stack: optional MinIO + exporter. pgBackRest commands run inside supabase-db.
 # Run from: {{ backup_compose_dir | default('/home/' ~ deploy_user ~ '/backup') }}
 
 services:
-  pgbackrest:
-    image: {{ pgbackrest_image }}
-    container_name: supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      TZ: {{ timezone | default('UTC') }}
-      BACKREST_UID: "{{ pgbackrest_uid }}"
-      BACKREST_GID: "{{ pgbackrest_gid }}"
-    volumes:
-      # Shared PGDATA volume (same as supabase-db, read-write for restore)
-      - {{ supabase_data_path }}:/var/lib/postgresql/data:z
-      # pgBackRest config
-      - ./pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
-      # pgBackRest repo (for posix type; ignored for s3/minio)
-      - ./volumes/pgbackrest:/var/lib/pgbackrest:z
-      # Logs
-      - ./volumes/pgbackrest-log:/var/log/pgbackrest:z
-    networks:
-      - default
 {% if backup_repo_type == 'minio' %}
-
   minio:
     image: {{ minio_image }}
     container_name: supabase-minio{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
@@ -77,7 +55,6 @@ services:
     volumes:
       - ./pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
       - ./volumes/pgbackrest:/var/lib/pgbackrest:z
-      - ./volumes/pgbackrest-log:/var/log/pgbackrest:z
     ports:
       - 127.0.0.1:{{ pgbackrest_exporter_port }}:9854
     networks:

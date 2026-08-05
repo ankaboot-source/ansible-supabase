@@ -129,11 +129,49 @@
     docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || docker network create "$NETWORK_NAME"
   when: backup_enabled | default(false) | bool
 
-- name: Ensure pgbackrest.conf exists for backup mount
+- name: Prepare backup paths on host
   shell: |
-    CONF="/home/{{ deploy_user }}/backup/pgbackrest.conf"
-    if [ -d "$CONF" ]; then rm -rf "$CONF"; fi
+    set -eu
+    BACKUP_DIR="/home/{{ deploy_user }}/backup"
+    BIN_DIR="$BACKUP_DIR/pgbackrest-bin"
+    IMAGE="{{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}"
+
+    # Remove Docker-created dirs that shadow our bind-mount sources
+    for p in /usr/bin/pgbackrest "$BIN_DIR/pgbackrest" "$BIN_DIR/lib"*; do
+      [ -e "$p" ] || continue
+      [ -d "$p" ] && rm -rf "$p" || rm -f "$p"
+    done
+
+    # Extract pgbackrest binary + shared libraries from the Docker image
+    if [ ! -f "$BIN_DIR/pgbackrest" ]; then
+      TMPCTR="pgbackrest-extract-$$"
+      docker create --name "$TMPCTR" "$IMAGE" >/dev/null 2>&1 || true
+      docker cp "$TMPCTR:/usr/bin/pgbackrest" "$BIN_DIR/pgbackrest" 2>/dev/null || true
+      # Copy all Alpine shared libs that pgbackrest needs
+      for lib in libbz2 libcrypto libcurl libgcrypt libgpg-error libhistory libintl libjson-c liblz4 liblzma libpcre2-8 libpq libprotobuf-c libssh2 libssl libxml2 libz libzstd ld-musl; do
+        docker cp "$TMPCTR:/usr/lib/${lib}"* "$BIN_DIR/" 2>/dev/null || true
+      done
+      docker rm "$TMPCTR" >/dev/null 2>&1 || true
+      chmod 755 "$BIN_DIR/pgbackrest"
+      chown -R root:root "$BIN_DIR"
+    fi
+
+    # Create wrapper script that sets LD_LIBRARY_PATH only for pgbackrest
+    # (setting it on the container env would poison PostgreSQL's own libraries)
+    printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/usr/lib/pgbackrest-bin\nexec /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' > "$BACKUP_DIR/pgbackrest-wrapper"
+    chmod 755 "$BACKUP_DIR/pgbackrest-wrapper"
+
+    # Ensure pgbackrest.conf placeholder exists (backup role renders the real config)
+    CONF="$BACKUP_DIR/pgbackrest.conf"
     [ -f "$CONF" ] || install -m 0640 /dev/null "$CONF"
+
+    # Fix ownership for directories that postgres (UID 100) writes to
+    mkdir -p "$BACKUP_DIR/volumes/pgbackrest/lock"
+    mkdir -p "$BACKUP_DIR/volumes/pgbackrest-log"
+    mkdir -p "$BACKUP_DIR/volumes/pgbackrest-spool/archive"
+    chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest"
+    chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest-log"
+    chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest-spool"
   when: backup_enabled | default(false) | bool
 
 - name: Start Supabase

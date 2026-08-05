@@ -555,8 +555,12 @@ services:
       - /var/log/postgresql:/var/log/postgresql:Z
       # Mount SSL certs
       - /opt/postgres-certs:/etc/postgres/certs:ro
-      {{ '- /usr/bin/pgbackrest:/usr/bin/pgbackrest:ro  # pgBackRest binary (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/pgbackrest-wrapper:/usr/bin/pgbackrest:ro  # pgBackRest wrapper (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/pgbackrest-bin:/usr/lib/pgbackrest-bin:ro  # pgBackRest binary + shared libs (backup role)' if backup_enabled | default(false) | bool else '' }}
       {{ '- /home/' + deploy_user + '/backup/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro  # pgBackRest config (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/volumes/pgbackrest:/var/lib/pgbackrest:z  # pgBackRest lock dir (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/volumes/pgbackrest-log:/var/log/pgbackrest:z  # pgBackRest logs (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/volumes/pgbackrest-spool:/var/spool/pgbackrest:z  # pgBackRest archive spool (backup role)' if backup_enabled | default(false) | bool else '' }}
 {{ '    networks:' if backup_enabled | default(false) | bool else '' }}
 {{ '      - default' if backup_enabled | default(false) | bool else '' }}
 {{ '      - supabase-backup-net' + ('-' + deploy_env if deploy_env != 'changeit' else '') if backup_enabled | default(false) | bool else '' }}

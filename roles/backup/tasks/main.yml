@@ -1,5 +1,5 @@
 ---
-# Backup role — pgBackRest sibling container + WAL archiving + PITR + verify + monitoring
+# Backup role — pgBackRest in supabase-db + WAL archiving + PITR + verify + monitoring
 # Idempotent: re-running does not re-init the stanza or expire backups.
 
 - name: Assert required variables are set
@@ -51,6 +51,7 @@
     - "{{ backup_compose_dir }}"
     - "{{ backup_compose_dir }}/volumes/pgbackrest"
     - "{{ backup_compose_dir }}/volumes/pgbackrest-log"
+    - "{{ backup_compose_dir }}/volumes/pgbackrest-spool"
     - "{{ backup_compose_dir }}/{{ backup_path }}"
     - "{{ backup_log_dir }}"
   vars:
@@ -61,9 +62,9 @@
   template:
     src: pgbackrest.conf.j2
     dest: "{{ backup_compose_dir }}/pgbackrest.conf"
-    owner: "{{ deploy_user }}"
-    group: "{{ deploy_user }}"
-    mode: "0640"
+    owner: "100"
+    group: "101"
+    mode: "0644"
   vars:
     backup_compose_dir: "/home/{{ deploy_user }}/backup"
   register: pgbackrest_conf
@@ -112,7 +113,7 @@
   loop_control:
     label: "{{ item.name }}"
 
-# --- Bring up the backup stack (pgbackrest + minio + exporter) ---
+# --- Bring up the backup stack (minio + exporter; pgbackrest runs in supabase-db) ---
 - name: Bring up backup stack
   command: docker compose up -d
   args:
@@ -121,11 +122,11 @@
     backup_compose_dir: "/home/{{ deploy_user }}/backup"
   changed_when: false
 
-# --- Wait for pgbackrest container to be healthy ---
-- name: Wait for pgbackrest container
-  command: docker inspect --format='{% raw %}{{.State.Running}}{% endraw %}' supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
-  register: pgbackrest_running
-  until: pgbackrest_running.stdout == 'true'
+# --- Wait for supabase-db to be running (pgbackrest commands execute there) ---
+- name: Wait for supabase-db container
+  command: docker inspect --format='{% raw %}{{.State.Running}}{% endraw %}' supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+  register: db_running
+  until: db_running.stdout == 'true'
   retries: 10
   delay: 3
   changed_when: false
@@ -133,7 +134,7 @@
 # --- Create stanza (idempotent — pgBackRest skips existing stanzas) ---
 - name: Create pgBackRest stanza
   command: >
-    docker exec supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+    docker exec supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     pgbackrest --stanza={{ backup_stanza_name }} --log-level-console=info stanza-create
   register: stanza_create_result
   changed_when: "'already exists' not in stanza_create_result.stdout | default('')"
@@ -147,7 +148,7 @@
 # --- Initial full backup on enable ---
 - name: Initial full backup on enable
   command: >
-    docker exec supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+    docker exec supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     pgbackrest --stanza={{ backup_stanza_name }} --type=full --log-level-console=info backup
   when: backup_initial_on_enable | bool
   register: initial_backup_result
