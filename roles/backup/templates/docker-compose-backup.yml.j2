@@ -86,5 +86,5 @@ services:
 
 networks:
   default:
+    external: true
     name: supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
-    driver: bridge
