@@ -130,11 +130,10 @@
   when: backup_enabled | default(false) | bool
 
 - name: Ensure pgbackrest.conf exists for backup mount
-  copy:
-    content: ""
-    dest: "/home/{{ deploy_user }}/backup/pgbackrest.conf"
-    force: false
-    mode: "0640"
+  shell: |
+    CONF="/home/{{ deploy_user }}/backup/pgbackrest.conf"
+    if [ -d "$CONF" ]; then rm -rf "$CONF"; fi
+    [ -f "$CONF" ] || install -m 0640 /dev/null "$CONF"
   when: backup_enabled | default(false) | bool
 
 - name: Start Supabase
