@@ -80,6 +80,7 @@
     owner: "100"
     group: "101"
     mode: "0644"
+    unsafe_writes: yes
   vars:
     backup_compose_dir: "/home/{{ deploy_user }}/backup"
   register: pgbackrest_conf
@@ -137,6 +138,7 @@
   vars:
     backup_compose_dir: "/home/{{ deploy_user }}/backup"
   changed_when: false
+  when: backup_repo_type == 'minio' or (backup_monitoring_enabled | default(false) | bool)
 
 # --- Wait for MinIO bucket creation (minio-init exits 0 when its 'mc mb' finished) ---
 # stanza-create needs the bucket to exist in the repo; otherwise it fails with 039.

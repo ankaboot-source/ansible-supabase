@@ -203,6 +203,18 @@
   command: bash /tmp/prepare-backup-paths.sh
   when: backup_enabled | default(false) | bool
 
+# --- Render pgbackrest.conf BEFORE the db container is created, so boot-time
+# archive_command reads the correct repo config (and the fresh container binds
+# its inode). Re-rendered by the backup role later (with unsafe_writes). ---
+- name: Render pgbackrest.conf
+  template:
+    src: "{{ playbook_dir }}/roles/backup/templates/pgbackrest.conf.j2"
+    dest: "/home/{{ deploy_user }}/backup/pgbackrest.conf"
+    owner: "100"
+    group: "101"
+    mode: "0644"
+  when: backup_enabled | default(false) | bool
+
 # --- Bring up MinIO before Supabase starts, so WAL archiving resolves on first boot ---
 - name: Render backup compose for MinIO
   template:
@@ -211,14 +223,14 @@
     owner: "{{ deploy_user }}"
     group: "{{ deploy_user }}"
     mode: "0640"
-  when: backup_enabled | default(false) | bool
+  when: (backup_enabled | default(false) | bool) and (backup_repo_type | default('minio')) == 'minio'
 
 - name: Start MinIO
   command: docker compose up -d minio
   args:
     chdir: "/home/{{ deploy_user }}/backup"
   changed_when: false
-  when: backup_enabled | default(false) | bool
+  when: (backup_enabled | default(false) | bool) and (backup_repo_type | default('minio')) == 'minio'
 
 - name: Start Supabase
   command: "bash /home/{{ deploy_user }}/{{ supabase_path }}/start-supabase.sh"
