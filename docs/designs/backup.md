@@ -1,6 +1,8 @@
 # Design: Automated Backups + PITR with pgBackRest
 
 > Issue: #118 — `feat(backup): automated backups + PITR with pgBackRest`
+>
+> **Status note (post-implementation):** the topology below describes the *original* design (sibling `supabase-pgbackrest` container). The shipped implementation superseded it — pgBackRest now runs **inside `supabase-db`** (binary + libs bind-mounted, `LD_LIBRARY_PATH` scoped by a wrapper), no shared PGDATA volume. See `AGENTS.md` → "Backup / pgBackRest" for the pitfalls and the "Weaknesses & Best Options" section for why the final approach was chosen.
 
 ## Goal
 

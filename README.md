@@ -334,7 +334,7 @@ Then uncomment the `luks` role in `playbook-supabase.yml` (see step 5).
 
 ### Automated Backups + PITR (pgBackRest)
 
-Runs pgBackRest as a sibling container sharing the Postgres data volume, with continuous WAL archiving, scheduled full + differential backups, point-in-time recovery, and repo-integrity verification. Defaults to a local MinIO repo (no off-box protection — a loud warning is printed); switch to an external S3 bucket for real protection. Set in `config.yml`:
+Runs pgBackRest **inside** the `supabase-db` container (the upstream `supabase/postgres` image is not forked; the pgbackrest binary + libs are bind-mounted in). Provides continuous WAL archiving, scheduled full + differential backups, point-in-time recovery, and repo-integrity verification. Defaults to a local MinIO repo (no off-box protection — a loud warning is printed); switch to an external S3 bucket for real protection. When enabled, the installer brings up MinIO before Supabase so WAL archiving resolves on the db's first boot. Set in `config.yml`:
 
 ```yaml
 components:

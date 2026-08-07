@@ -77,7 +77,7 @@ Tests are shell-level (matching `tests/test-setup.sh` / `tests/test-migrate.sh` 
 
 **Given** backup role runs with `backup_enabled: true` for the first time.
 **When** the role executes.
-**Then** `docker exec supabase-pgbackrest pgbackrest --stanza=main stanza-create` is invoked exactly once.
+**Then** `docker exec supabase-db pgbackrest --stanza=main stanza-create` is invoked exactly once (after `supabase-minio-init` has exited 0).
 
 ## TC-BACKUP-012: stanza-create is not re-called on re-run (idempotency)
 

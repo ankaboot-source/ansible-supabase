@@ -297,12 +297,13 @@ The initramfs is automatically updated to support keyfile-based unlock on boot.
 
 ## Backups (pgBackRest)
 
-Automated backups + continuous WAL archiving + point-in-time recovery (PITR) via [pgBackRest](https://pgbackrest.org/), running as a sibling container sharing the PGDATA volume.
+Automated backups + continuous WAL archiving + point-in-time recovery (PITR) via [pgBackRest](https://pgbackrest.org/), running **inside** the `supabase-db` container (no separate pgbackrest container, and the upstream `supabase/postgres` image is not forked).
 
 ### How it works
 
-- **pgBackRest** runs as a sibling container (`supabase-pgbackrest`) alongside `supabase-db`, sharing the PGDATA volume.
-- **Continuous WAL archiving**: Postgres `archive_command` runs `pgbackrest archive-push %p` directly in the db container (binary mounted read-only). pgBackRest uses `archive-async=y` with its own internal spool for queueing and retry.
+- **pgBackRest** runs inside `supabase-db`. The Alpine pgbackrest binary + its shared libraries are extracted to a host dir at deploy time and bind-mounted read-only; a wrapper script scopes `LD_LIBRARY_PATH` to the pgbackrest process only. All pgbackrest commands (`stanza-create`, `backup`, `verify`, `expire`) execute via `docker exec supabase-db`.
+- **Boot ordering (important)**: when `backup` is enabled, the install brings up the **MinIO** container *before* starting Supabase, because Postgres boots with `archive_mode=on` and needs the archive target reachable so initdb shuts down cleanly. MinIO must be up before the db's first boot on a fresh deploy.
+- **Continuous WAL archiving**: Postgres `archive_command` runs `pgbackrest archive-push %p` directly in the db container. pgBackRest uses `archive-async=y` with its own internal spool for queueing and retry. `minio-init` creates the bucket and exits 0; the playbook waits for it before `stanza-create`.
 - **Scheduled backups**: full (weekly) + differential (daily) via cron.
 - **PITR**: restore to any point in time covered by the WAL archive.
 - **Verification**: daily `pgbackrest verify` (cheap integrity check); optional restore drill (full restore into throwaway volume).
