@@ -172,17 +172,26 @@
   changed_when: "'already exists' not in stanza_create_result.stdout | default('')"
   failed_when: false
 
-# --- If stanza-create fails with 028 (stale metadata), backup old MinIO data, clean, retry ---
-- name: Backup and clean stale MinIO data
+# --- If stanza-create fails with 028 (stale metadata), reset MinIO to a clean slate and retry ---
+# The old repo is bound to a different DB system-id and is unusable; the clean
+# reset must RE-CREATE the bucket (minio-init's `mc mb` runs because the one-shot
+# container is removed). Wiping volumes/minio under the running MinIO and
+# retrying would hit `039 NoSuchBucket` — the bucket would never come back.
+- name: Backup and reset stale MinIO data
   shell: |
-    STALE_BACKUP="{{ backup_compose_dir }}/volumes/minio-backup-$(date +%Y%m%d-%H%M%S)"
-    echo "Stale stanza detected — backing up old MinIO data to $STALE_BACKUP"
-    cp -r {{ backup_compose_dir }}/volumes/minio "$STALE_BACKUP"
-    echo "Cleaning stale MinIO data..."
-    rm -rf {{ backup_compose_dir }}/volumes/minio/*
-    echo "Old backup preserved at: $STALE_BACKUP"
+    set -eu
+    cd {{ backup_compose_dir }}
+    STALE_BACKUP="volumes/minio-stale-$(date +%Y%m%d-%H%M%S)"
+    echo "Stale stanza detected — preserving old MinIO data to $STALE_BACKUP"
+    docker compose stop minio minio-init >/dev/null 2>&1 || true
+    mv volumes/minio "$STALE_BACKUP" 2>/dev/null || true
+    # Drop the already-consumed one-shot so compose re-runs its `mc mb` entrypoint.
+    docker compose rm -f minio minio-init >/dev/null 2>&1 || true
+    docker compose up -d minio minio-init
+    echo "MinIO reset. Old data preserved at: $STALE_BACKUP"
   when: >
-    stanza_create_result.rc | default(0) != 0
+    backup_repo_type == 'minio'
+    and stanza_create_result.rc | default(0) != 0
     and (
         '028' in ((stanza_create_result.stderr | default('')) ~ (stanza_create_result.stdout | default('')))
         or '103' in ((stanza_create_result.stderr | default('')) ~ (stanza_create_result.stdout | default('')))
@@ -192,7 +201,17 @@
   vars:
     backup_compose_dir: "/home/{{ deploy_user }}/backup"
 
-- name: Create pgBackRest stanza (retry after stale clean)
+# --- After a stale reset, wait for the re-created bucket before retrying ---
+- name: Wait for MinIO bucket re-created after stale reset
+  command: docker inspect --format='{% raw %}{{.State.ExitCode}}{% endraw %}' supabase-minio-init{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+  register: minio_bucket_ready_retry
+  until: (minio_bucket_ready_retry.rc == 0) and (minio_bucket_ready_retry.stdout == '0')
+  retries: 40
+  delay: 5
+  changed_when: false
+  when: backup_clean_result is changed
+
+- name: Create pgBackRest stanza (retry after MinIO reset)
   command: >
     docker exec supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     pgbackrest --stanza={{ backup_stanza_name }} --log-level-console=info stanza-create
