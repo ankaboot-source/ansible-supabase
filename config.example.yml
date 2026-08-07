@@ -118,6 +118,10 @@ advanced:
     repo_type: minio
 
     # --- S3 repo (only if repo_type: s3) ---
+    # ENDPOINT MUST BE HOST-ONLY (no URL path): pgBackRest silently drops any
+    # path, so Supabase Cloud Storage's .../storage/v1/s3 endpoint is incompatible.
+    # Use the plain provider endpoint, e.g. https://s3.eu-west-1.amazonaws.com
+    # (or https://<region>.digitaloceanspaces.com — not the bucket-qualified form).
     s3_endpoint: changeit        # e.g. https://s3.eu-west-1.amazonaws.com
     s3_region: us-east-1
     s3_bucket: changeit         # e.g. supabase-backups

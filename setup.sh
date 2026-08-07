@@ -180,8 +180,33 @@ warn_component_placeholders() {
       warn "  Use creds_source: vault for production."
       warnings=$((warnings + 1))
     fi
-    # Warn on s3 repo with placeholder creds
+    # Warn on s3 repo with placeholder creds. Also reject an endpoint that
+    # carries a URL path — pgBackRest's repo1-s3-endpoint is scheme://host[:port]
+    # ONLY, it ignores any path (e.g. Supabase Cloud's .../storage/v1/s3), so
+    # requests go to the wrong URL and fail with 404.
     if [[ "$repo_type" == "s3" ]]; then
+      s3_endpoint="$(cfg_get "advanced.backup.s3_endpoint")"
+      if [[ -n "$s3_endpoint" && "$s3_endpoint" != "changeit" ]]; then
+        s3_path="$(python3 - "$s3_endpoint" <<'PY'
+import sys
+from urllib.parse import urlsplit
+u = urlsplit(sys.argv[1])
+if u.netloc:
+    print(u.path)
+PY
+)"
+        if [[ "$s3_path" != "" && "$s3_path" != "/" ]]; then
+          die "advanced.backup.s3_endpoint must be a host URL with NO path.
+
+  Got:  $s3_endpoint
+  Path: $s3_path
+
+pgBackRest's repo1-s3-endpoint accepts only scheme://host[:port] — it cannot
+use a URL with a path. Such an endpoint (e.g. Supabase Cloud Storage's
+https://<project>.supabase.co/storage/v1/s3) is INCOMPATIBLE; pgBackRest drops
+the path and every request 404s. Use e.g. https://s3.eu-west-1.amazonaws.com"
+        fi
+      fi
       for f in s3_endpoint s3_bucket s3_access_key s3_secret_key; do
         v="$(cfg_get "advanced.backup.$f")"
         if [[ -z "$v" || "$v" == "changeit" ]]; then

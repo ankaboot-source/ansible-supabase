@@ -342,7 +342,7 @@ components:
 advanced:
   backup:
     repo_type: s3              # minio (local, default) | s3 (external) | posix (local fs)
-    s3_endpoint: https://<your-endpoint>
+    s3_endpoint: https://<your-endpoint>   # host-only (no URL path); e.g. https://s3.eu-west-1.amazonaws.com
     s3_region: us-east-1
     s3_bucket: supabase-backups
     s3_access_key: <your-key>

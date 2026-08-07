@@ -313,9 +313,18 @@ Automated backups + continuous WAL archiving + point-in-time recovery (PITR) via
 
 | `backup_repo_type` | What it is | Encryption | Warning |
 |---|---|---|---|
-| `minio` (default) | Local MinIO container on the same box | off | **No off-box protection** — if the server dies, backups die with it. |
-| `s3` | External S3-compatible (AWS S3, R2, B2, Wasabi) | **on** (forced) | Off-box protection. |
+| `minio` (default) | Local MinIO container on the same host | off | **No off-box protection** — if the server dies, backups die with it. |
+| `s3` | External S3-compatible (AWS S3, R2, B2, Wasabi, DigitalOcean Spaces) | **on** (forced) | Off-box protection. |
 | `posix` | Local filesystem path | off | Same warning as `minio`. |
+
+> **S3 endpoints must be host-only (no URL path).** pgBackRest's `repo1-s3-endpoint`
+> accepts only `scheme://host[:port]`. Any path in the endpoint is **silently
+> dropped** — e.g. Supabase Cloud Storage's S3 endpoint
+> `https://<project>.supabase.co/storage/v1/s3` is **incompatible**: requests go
+> to the wrong URL and fail with `404`. `setup.sh` rejects path-bearing endpoints
+> before deploying. Use a plain endpoint such as
+> `https://s3.eu-west-1.amazonaws.com` (AWS) or `https://<region>.digitaloceanspaces.com`
+> (DO Spaces — do **not** use the bucket-qualified `https://<bucket>.<region>.digitaloceanspaces.com` form).
 
 ### Minimal config (hobby)
 

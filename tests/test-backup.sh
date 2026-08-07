@@ -118,6 +118,33 @@ else
   fail "encryption not forced on for s3 repo"
 fi
 
+# ─── TC-BACKUP-040: s3_endpoint with a URL path is rejected ─────────────────
+echo "TC-BACKUP-040: s3_endpoint with a URL path is rejected"
+d="$(make_sandbox tc040)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+enable_backup_s3 "$d"
+sed -i 's|s3_endpoint: https://s3.eu-west-1.amazonaws.com|s3_endpoint: https://project.supabase.co/storage/v1/s3|' "$d/config.yml"
+run_setup_rc "$d" --yes
+if [[ $RC -ne 0 ]] && echo "$OUT" | grep -qi "INCOMPATIBLE\|NO path\|pgBackRest"; then
+  ok "rejects path-bearing s3 endpoint with clear error (rc=$RC)"
+else
+  fail "expected non-zero exit + pgBackRest error for path-bearing endpoint (rc=$RC)"
+fi
+
+# ─── TC-BACKUP-041: host-only s3_endpoint passes validation ─────────────────
+echo "TC-BACKUP-041: host-only s3_endpoint passes validation"
+d="$(make_sandbox tc041)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+enable_backup_s3 "$d"
+run_setup_rc "$d" --yes
+if [[ $RC -eq 0 ]] && grep -q "backup_s3_endpoint: https://s3.eu-west-1.amazonaws.com" "$d/env/supabase.yml"; then
+  ok "host-only s3_endpoint accepted (rc=$RC)"
+else
+  fail "host-only s3_endpoint was rejected (rc=$RC)"
+fi
+
 # ─── TC-BACKUP-026: .env creds source warns ─────────────────────────────────
 echo "TC-BACKUP-026: .env creds source warns"
 d="$(make_sandbox tc026)"
