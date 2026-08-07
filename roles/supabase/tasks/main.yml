@@ -203,5 +203,22 @@
   command: bash /tmp/prepare-backup-paths.sh
   when: backup_enabled | default(false) | bool
 
+# --- Bring up MinIO before Supabase starts, so WAL archiving resolves on first boot ---
+- name: Render backup compose for MinIO
+  template:
+    src: "{{ playbook_dir }}/roles/backup/templates/docker-compose-backup.yml.j2"
+    dest: "/home/{{ deploy_user }}/backup/docker-compose.yml"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0640"
+  when: backup_enabled | default(false) | bool
+
+- name: Start MinIO
+  command: docker compose up -d minio
+  args:
+    chdir: "/home/{{ deploy_user }}/backup"
+  changed_when: false
+  when: backup_enabled | default(false) | bool
+
 - name: Start Supabase
   command: "bash /home/{{ deploy_user }}/{{ supabase_path }}/start-supabase.sh"
