@@ -73,6 +73,7 @@ Most agents default to treating Supabase like the SaaS cloud product. This repo 
 |------|----------|
 | `/home/<deploy_user>/supabase/` | Cloned upstream Supabase repo (chowned to `deploy_user`) |
 | `/home/<deploy_user>/supabase/docker/` | Rendered `docker-compose-supabase.yml`, `.env`, `start-supabase.sh`, Kong config (`volumes/api/kong.yml`) — this is the stack working directory (`supabase_path` var, default `supabase/docker`) |
+| `/home/<deploy_user>/supabase/docker/volumes/functions/` | Edge Function source — each function is a subfolder (`<name>/index.ts`) mounted into the edge-runtime container (`/home/deno/functions`) and Studio (`/app/edge-functions`) |
 | `/opt/postgres-certs/` | Postgres SSL certs (mounted read-only into the db container) |
 | `/var/log/postgresql/` | Postgres logs (host-mounted into the db container — never inside the data dir) |
 | `/etc/caddy/Caddyfile` | Caddy config (rendered from the SSO provider template) |
@@ -107,6 +108,18 @@ supabase gen types typescript --db-url "postgresql://postgres:<pwd>@127.0.0.1:54
 ```
 Use the direct port (`5432`), not the pooler.
 
+**Deploy / update an Edge Function**:
+1. Copy the function folder onto the host under the functions volume (each function is a directory containing `index.ts`):
+   ```bash
+   scp -r ./my-function user@host:/home/<deploy_user>/supabase/docker/volumes/functions/
+   ```
+2. Restart the functions service so the edge-runtime picks up the new/changed code:
+   ```bash
+   cd /home/<deploy_user>/supabase/docker && docker compose restart functions
+   ```
+3. Verify: `curl https://<domain>/functions/v1/<name>` (Kong routes `/functions/v1/*` to the edge-runtime).
+- `supabase functions deploy` targets Supabase **Cloud** projects and does **not** deploy to a self-hosted instance — self-hosted deployment is filesystem-based (copy into `volumes/functions` + restart). Function env vars/secrets live in the compose `environment:` block (or a `.env.functions` override); changing them requires recreating the container, not just restarting.
+
 **Inspect logs & services**:
 1. Resolve container names: `cd /home/<deploy_user>/supabase/docker && docker compose ps` (e.g. `supabase-db`, `supabase-kong`, `supabase-rest`, `supabase-auth`, `supabase-studio`, `supabase-pooler`, `grafana`, `promtail`).
 2. Fetch recent logs: `docker logs --tail 100 <container_name>`.
@@ -133,6 +146,8 @@ Use the direct port (`5432`), not the pooler.
 | Empty logs in Studio UI | Logflare/Analytics is disabled in self-hosted builds | Use `docker logs --tail 100 <container>` or Grafana/Loki |
 | `403 {"message":"IP address not allowed: ..."}` on `/mcp` | Docker NATs host-originated traffic to the bridge gateway IP; the `ip-restriction` allow list must include the pinned subnet gateway (`172.28.0.1`) | See **MCP / Docker networking** pitfalls below; update `mcp_allowed_ips` to match the pinned subnet gateway |
 | Kong fails to start after a route/plugin edit | A malformed plugin (e.g. `ip-restriction` with a YAML flow-list bug) breaks the startup healthcheck | Test on a staging route first; keep risky config commented until the runtime rejection is understood (see Kong pitfall below) |
+| Edge Function returns `404` or serves stale code | Function folder not in `volumes/functions/` (`<name>/index.ts`), or edge-runtime not restarted after the copy | Copy the folder to `<supabase_path>/volumes/functions/` and `docker compose restart functions` |
+| `supabase functions deploy` fails against the self-hosted host | The CLI deploys to Supabase **Cloud**, not self-hosted instances | Deploy by copying the function into `volumes/functions/` and restarting the `functions` service |
 
 ## Known Pitfalls & Lessons Learned
 
