@@ -107,8 +107,11 @@ That's it. `setup.sh` will:
 |------|-------------|
 | `--dry-run` | Preview what would happen without modifying any files |
 | `--yes` | Non-interactive (skip confirmation prompts) — ideal for CI/AI agents |
+| `--force` | Regenerate secrets even if `env/supabase.yml` is already locked |
 | `-v, --verbose` | Verbose output |
 | `-h, --help` | Show help |
+
+> **Locking:** after the first successful render, `setup.sh` writes `env/.setup.lock`. Subsequent runs **preserve the existing secrets** in `env/supabase.yml` — they are neither regenerated nor overwritten with placeholders — so already-running Supabase services keep working. Pass `--force` to regenerate secrets on purpose (e.g. after a key rotation). `--dry-run` never writes the lock.
 
 ```bash
 # Preview without changes

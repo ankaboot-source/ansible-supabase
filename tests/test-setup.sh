@@ -26,11 +26,13 @@ make_sandbox() {
   cp "$WORKTREE/setup.sh" "$WORKTREE/config.example.yml" "$WORKTREE/install.sh" \
      "$WORKTREE/generate-keys.sh" "$WORKTREE/playbook-supabase.yml" "$d/" 2>/dev/null
   cp "$WORKTREE/env/supabase.yml" "$d/env/"
+  # Remove any stale lock file copied from the real env/ (tests manage it explicitly)
+  rm -f "$d/env/.setup.lock"
   cat > "$d/install.sh" <<'STUB'
 #!/bin/bash
 echo "STUBBED_INSTALL_OK"
 STUB
-  chmod +x "$d/install.sh" "$d/setup.sh"
+  chmod +x "$d/install.sh" "$d/setup.sh" "$d/generate-keys.sh"
   echo "$d"
 }
 
@@ -245,6 +247,156 @@ if [[ $RC -eq 0 ]]; then
   fi
 else
   fail "setup.sh failed with monitor enabled (rc=$RC)"
+  echo "$OUT" | tail -20
+fi
+
+# ─── TC-LOCK-001: First run writes lock file ──────────────────────────────────
+echo "TC-LOCK-001: first run writes lock file"
+d="$(make_sandbox tc_lock_001)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+rm -f "$d/env/.setup.lock"
+run_setup_rc "$d" --yes
+if [[ $RC -eq 0 && -f "$d/env/.setup.lock" ]] \
+  && ! grep -q "^postgres_db_pwd: changeit" "$d/env/supabase.yml"; then
+  ok "first run creates lock file and generates secrets"
+else
+  fail "first run did not create lock file or generate secrets (rc=$RC)"
+  echo "$OUT" | tail -20
+fi
+
+# ─── TC-LOCK-002: Second run preserves secrets (no --force) ───────────────────
+echo "TC-LOCK-002: second run preserves secrets"
+# Reuse tc_lock_001 sandbox (lock file + secrets already in place)
+pwd_before="$(grep '^postgres_db_pwd:' "$d/env/supabase.yml" | awk '{print $2}')"
+jwt_before="$(grep '^sb_jwt_secret:' "$d/env/supabase.yml" | awk '{print $2}')"
+run_setup_rc "$d" --yes
+pwd_after="$(grep '^postgres_db_pwd:' "$d/env/supabase.yml" | awk '{print $2}')"
+jwt_after="$(grep '^sb_jwt_secret:' "$d/env/supabase.yml" | awk '{print $2}')"
+if [[ $RC -eq 0 && "$pwd_before" == "$pwd_after" && "$jwt_before" == "$jwt_after" ]] \
+  && echo "$OUT" | grep -q "\[lock\]"; then
+  ok "second run preserves secrets and prints [lock] notice"
+else
+  fail "second run changed secrets or missing [lock] notice (rc=$RC)"
+  echo "  pwd: $pwd_before -> $pwd_after"
+  echo "  jwt: $jwt_before -> $jwt_after"
+fi
+
+# ─── TC-LOCK-003: --force regenerates secrets ─────────────────────────────────
+echo "TC-LOCK-003: --force regenerates secrets"
+# Reuse tc_lock_001 sandbox
+pwd_before="$(grep '^postgres_db_pwd:' "$d/env/supabase.yml" | awk '{print $2}')"
+run_setup_rc "$d" --yes --force
+pwd_after="$(grep '^postgres_db_pwd:' "$d/env/supabase.yml" | awk '{print $2}')"
+if [[ $RC -eq 0 && "$pwd_before" != "$pwd_after" ]] \
+  && ! grep -q "^postgres_db_pwd: changeit" "$d/env/supabase.yml"; then
+  ok "--force regenerates secrets (postgres_db_pwd changed)"
+else
+  fail "--force did not regenerate secrets (rc=$RC, changed=$([[ $pwd_before == $pwd_after ]] && echo no || echo yes))"
+fi
+
+# ─── TC-LOCK-004: Disabling generation does NOT clobber existing secrets ──────
+echo "TC-LOCK-004: secrets.generate=false does not clobber locked env"
+d="$(make_sandbox tc_lock_004)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+run_setup_rc "$d" --yes   # first run: generate + lock
+pwd_before="$(grep '^postgres_db_pwd:' "$d/env/supabase.yml" | awk '{print $2}')"
+jwt_before="$(grep '^sb_jwt_secret:' "$d/env/supabase.yml" | awk '{print $2}')"
+# Now disable generation (leave secrets.* as changeit in config)
+sed -i 's|generate: true|generate: false|' "$d/config.yml"
+run_setup_rc "$d" --yes
+pwd_after="$(grep '^postgres_db_pwd:' "$d/env/supabase.yml" | awk '{print $2}')"
+jwt_after="$(grep '^sb_jwt_secret:' "$d/env/supabase.yml" | awk '{print $2}')"
+if [[ $RC -eq 0 && "$pwd_before" == "$pwd_after" && "$jwt_before" == "$jwt_after" ]] \
+  && echo "$OUT" | grep -q "\[lock\]"; then
+  ok "generate=false preserves locked secrets (no clobber)"
+else
+  fail "generate=false clobbered locked secrets (rc=$RC)"
+  echo "  pwd: $pwd_before -> $pwd_after"
+  echo "  jwt: $jwt_before -> $jwt_after"
+fi
+
+# ─── TC-LOCK-005: --dry-run never writes a lock file ──────────────────────────
+echo "TC-LOCK-005: dry-run never writes lock file"
+d="$(make_sandbox tc_lock_005)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+rm -f "$d/env/.setup.lock"
+run_setup_rc "$d" --dry-run --yes
+if [[ $RC -eq 0 && ! -f "$d/env/.setup.lock" ]]; then
+  ok "dry-run does not create lock file"
+else
+  fail "dry-run created a lock file (rc=$RC, exists=$([ -f "$d/env/.setup.lock" ] && echo yes || echo no))"
+fi
+
+# ─── TC-LOCK-006: --force on first run behaves like normal first run ──────────
+echo "TC-LOCK-006: --force on first run"
+d="$(make_sandbox tc_lock_006)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+rm -f "$d/env/.setup.lock"
+run_setup_rc "$d" --yes --force
+if [[ $RC -eq 0 && -f "$d/env/.setup.lock" ]] \
+  && ! grep -q "^postgres_db_pwd: changeit" "$d/env/supabase.yml"; then
+  ok "--force on first run creates lock + generates secrets"
+else
+  fail "--force on first run failed (rc=$RC)"
+  echo "$OUT" | tail -20
+fi
+
+# ─── TC-LOCK-007: Lock file is valid JSON with expected fields ────────────────
+echo "TC-LOCK-007: lock file is valid JSON"
+d="$(make_sandbox tc_lock_007)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+run_setup_rc "$d" --yes
+if [[ $RC -eq 0 ]] && python3 -c "import json,sys; \
+   d=json.load(open('$d/env/.setup.lock')); \
+   assert 'rendered_at' in d and 'config_file' in d" 2>/dev/null; then
+  ok "lock file is valid JSON with rendered_at + config_file"
+else
+  fail "lock file is not valid JSON or missing fields (rc=$RC)"
+fi
+
+# ─── TC-LOCK-008: generate-keys.sh refuses without --force when locked ────────
+echo "TC-LOCK-008: generate-keys.sh refuses when locked"
+d="$(make_sandbox tc_lock_008)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+run_setup_rc "$d" --yes   # create lock + secrets
+pwd_before="$(grep '^postgres_db_pwd:' "$d/env/supabase.yml" | awk '{print $2}')"
+OUT="$( cd "$d" && sh generate-keys.sh 2>&1 )" && RC=$? || RC=$?
+pwd_after="$(grep '^postgres_db_pwd:' "$d/env/supabase.yml" | awk '{print $2}')"
+if [[ $RC -ne 0 && "$pwd_before" == "$pwd_after" ]] && echo "$OUT" | grep -qi "force"; then
+  ok "generate-keys.sh refuses when locked and mentions --force"
+else
+  fail "generate-keys.sh did not refuse when locked (rc=$RC, changed=$([[ $pwd_before == $pwd_after ]] && echo no || echo yes))"
+fi
+
+# ─── TC-LOCK-009: generate-keys.sh --force regenerates when locked ────────────
+echo "TC-LOCK-009: generate-keys.sh --force regenerates"
+# Reuse tc_lock_008 sandbox
+pwd_before="$(grep '^postgres_db_pwd:' "$d/env/supabase.yml" | awk '{print $2}')"
+OUT="$( cd "$d" && sh generate-keys.sh --force 2>&1 )" && RC=0 || RC=$?
+pwd_after="$(grep '^postgres_db_pwd:' "$d/env/supabase.yml" | awk '{print $2}')"
+if [[ $RC -eq 0 && "$pwd_before" != "$pwd_after" ]]; then
+  ok "generate-keys.sh --force regenerates secrets when locked"
+else
+  fail "generate-keys.sh --force did not regenerate (rc=$RC, changed=$([[ $pwd_before == $pwd_after ]] && echo no || echo yes))"
+fi
+
+# ─── TC-LOCK-010: generate-keys.sh runs freely when no lock exists ────────────
+echo "TC-LOCK-010: generate-keys.sh runs when no lock"
+d="$(make_sandbox tc_lock_010)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+rm -f "$d/env/.setup.lock"
+OUT="$( cd "$d" && sh generate-keys.sh 2>&1 )" && RC=0 || RC=$?
+if [[ $RC -eq 0 ]] && ! grep -q "^postgres_db_pwd: changeit" "$d/env/supabase.yml"; then
+  ok "generate-keys.sh runs without lock and generates secrets"
+else
+  fail "generate-keys.sh failed without lock (rc=$RC)"
   echo "$OUT" | tail -20
 fi
 

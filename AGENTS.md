@@ -86,6 +86,7 @@ These are problems encountered while building this repo, and how they were fixed
 - **`set_env_var` uses `sed` on `key: value` lines — never run it on a list variable**, it corrupts the YAML (e.g. `docker_users`). For lists, replace only the `- item` line and leave the key line untouched.
 - **When a rendered value may be empty or a placeholder, guard the write** with `[[ -n "$val" ]]` so template rendering doesn't break.
 - **Regenerate the whole playbook from component toggles** — never edit it line-by-line/uncomment fragments.
+- **Secret regeneration on a second `setup.sh` run breaks running Supabase services** (issue #127). The first successful render writes `env/.setup.lock`; subsequent runs skip the entire secrets block (whether `secrets.generate: true` or `false`) so the existing keys in `env/supabase.yml` are preserved byte-for-byte. `--force` overrides and regenerates. `--dry-run` never writes the lock. `generate-keys.sh` honors the same lock (`--force` to override). Never `set_env_var` a secrets field without first checking `ENV_LOCKED`/`FORCE`, or you reintroduce the clobber.
 
 ### Monitoring
 - **Promtail's push URL must have a valid scheme** (`http://loki:3100/...`, not `http//loki:3100`).
