@@ -4,7 +4,7 @@ One-command deployment of a **self-hosted, production-ready Supabase stack** on 
 
 This repository's purpose is to give you a **ready-to-use, full-featured Supabase with security, encryption, and SSO/auth baked in** — not a bare dashboard exposed to the internet.
 
-> **Encryption at rest (LUKS) and automated S3 backups** are included and ready to enable; they need a dedicated disk volume and S3 credentials respectively, so they are shown as optional hardening steps at the end of this guide.
+> **Encryption at rest (LUKS) and automated backups + PITR (pgBackRest)** are included and ready to enable; they need a dedicated disk volume and (for off-box backups) S3 credentials respectively, so they are shown as optional hardening steps at the end of this guide.
 
 For deep customization (custom OAuth providers, Grafana modes, retention tuning, version pinning) see [docs/advanced-docs.md](docs/advanced-docs.md).
 
@@ -76,7 +76,7 @@ components:
   caddy: false            # reverse proxy + TLS + SSO
   monitor: false          # Grafana + Prometheus + Loki
   fail2ban: false        # brute-force protection
-  backup: false           # S3-compatible backups
+  backup: false           # Automated backups + PITR (pgBackRest)
   ufw: false              # firewall
   luks: false             # at-rest disk encryption
 
@@ -296,7 +296,7 @@ The security roles ship commented in `playbook-supabase.yml`. **Uncomment them**
    # ─── Optional hardening (need external resources) ───
    # - role: luks             # At-rest disk encryption (needs a dedicated volume)
    #   when: supabase_encryption.enabled
-   # - backup                 # Automated S3-compatible backups (needs S3 creds)
+    # - backup                 # Automated backups + PITR (pgBackRest)
 ```
 
 ### 6. ▶️ Deploy
@@ -332,20 +332,27 @@ luks_mount_point: /data
 
 Then uncomment the `luks` role in `playbook-supabase.yml` (see step 5).
 
-### Automated S3 Backups
+### Automated Backups + PITR (pgBackRest)
 
-Dumps the database on a cron schedule and uploads to any S3-compatible storage. Set in `env/supabase.yml`:
+Runs pgBackRest **inside** the `supabase-db` container (the upstream `supabase/postgres` image is not forked; the pgbackrest binary + libs are bind-mounted in). Provides continuous WAL archiving, scheduled full + differential backups, point-in-time recovery, and repo-integrity verification. Defaults to a local MinIO repo (no off-box protection — a loud warning is printed); switch to an external S3 bucket for real protection. When enabled, the installer brings up MinIO before Supabase so WAL archiving resolves on the db's first boot. Set in `config.yml`:
 
 ```yaml
-s3_remote_name: r2
-s3_provider: Cloudflare
-s3_access_key: <your-key>
-s3_secret_key: <your-secret>
-s3_endpoint: https://<your-endpoint>
-s3_bucket_name: supabase-backups
+components:
+  backup: true
+advanced:
+  backup:
+    repo_type: s3              # minio (local, default) | s3 (external) | posix (local fs)
+    s3_endpoint: https://<your-endpoint>   # host-only (no URL path); e.g. https://s3.eu-west-1.amazonaws.com
+    s3_region: us-east-1
+    s3_bucket: supabase-backups
+    s3_access_key: <your-key>
+    s3_secret_key: <your-secret>
+    # Encryption is forced ON for external S3 repos.
+    # Credentials default to a plaintext .env file; set creds_source: vault
+    # to load them from Ansible Vault instead.
 ```
 
-Then uncomment the `backup` role in `playbook-supabase.yml` (see step 5).
+Then run `./setup.sh` (it regenerates `playbook-supabase.yml` from the toggles — no manual uncommenting needed). See [docs/advanced-docs.md](docs/advanced-docs.md) for the restore-during-an-incident runbook, retention tuning, and the full hardening checklist.
 
 ---
 
@@ -376,7 +383,7 @@ Plus the security/monitoring stack: **Caddy** (reverse proxy + TLS + SSO), **UFW
 | **Caddy Reverse Proxy + SSO** | Automatic TLS, GitHub/GitLab/Discord/Generic OIDC, basic auth, IP allow lists |
 | **Monitoring Stack** | Grafana, Prometheus, Loki, Node Exporter, cAdvisor, Postgres Exporter |
 | **LUKS Encryption** | At-rest disk encryption for Postgres data |
-| **S3 Backups** | Automated cron-based backups to S3-compatible storage |
+| **Backups + PITR** | pgBackRest: continuous WAL archiving, scheduled full/diff backups, point-in-time recovery, repo verification |
 | **Fail2ban** | Brute-force protection for PostgreSQL |
 | **UFW Firewall** | Fine-grained allow/deny rules |
 | **Secure MCP Access** | MCP server restricted to localhost; authorized clients connect via SSH tunnel — no public exposure |

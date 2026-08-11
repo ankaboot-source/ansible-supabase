@@ -1,3 +1,90 @@
 ---
+# Backup role defaults — hobby-safe constants.
+# Deployment-specific values (S3 creds, endpoints, bucket names) come from
+# env/supabase.yml (rendered by setup.sh from config.yml) and override these.
+# Per AGENTS.md: defaults are for constants only, never config-driven values.
 
-rclone_docker_image: "rclone/rclone:latest"
+# --- Container images (pinned for reproducibility) ---
+pgbackrest_image: "woblerr/pgbackrest:2.58.0-alpine"
+pgbackrest_exporter_image: "woblerr/pgbackrest_exporter:v0.24.0"
+minio_image: "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"
+minio_mc_image: "quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z"
+
+# --- pgBackRest stanza ---
+backup_stanza_name: "main"
+
+# --- Repository type: minio (default, local) | s3 (external) | posix (local fs) ---
+# Overridden by env/supabase.yml when the user configures it.
+backup_repo_type: "minio"
+
+# --- Encryption (off for local, ON for external — forced in setup.sh) ---
+backup_encryption: false
+backup_cipher_type: "aes-256-cbc"
+# backup_cipher_pass: ""  # set by env/supabase.yml when encryption is on
+
+# --- Credentials source: env (default, warned) | vault (hardened) ---
+backup_creds_source: "env"
+
+# --- Retention (hobby-safe defaults; harden via per-var overrides) ---
+backup_retention_full: 3
+backup_retention_diff: 3
+backup_retention_archive: 3
+backup_retention_archive_type: "full"
+
+# --- WAL archiving (always on — guardrail against silent data loss) ---
+backup_wal_archiving: true
+
+# --- Initial full backup on enable ---
+backup_initial_on_enable: true
+
+# --- Schedules (cron expressions) ---
+backup_cron_full: "0 3 * * 1"        # Mon 03:00
+backup_cron_diff: "0 3 * * 2-7"      # Tue–Sun 03:00
+backup_cron_verify: "0 4 * * *"     # Daily 04:00
+backup_cron_drill: "0 5 * * 6"       # Sat 05:00 (only if backup_restore_drill: true)
+
+# --- Restore drill (off by default — too heavy for a 2 GB VM) ---
+backup_restore_drill: false
+
+# --- Daily repo integrity check (always on) ---
+backup_repo_check: true
+
+# --- Paths ---
+backup_path: "backup"
+backup_scripts_dir: "/usr/local/bin"
+backup_cron_dir: "/etc/cron.d"
+backup_log_dir: "/var/log/supabase-backup"
+
+# --- pgBackRest container settings ---
+pgbackrest_uid: 2001
+pgbackrest_gid: 2001
+pgbackrest_conf_path: "/etc/pgbackrest"
+pgbackrest_repo_path: "/var/lib/pgbackrest"
+pgbackrest_log_path: "/var/log/pgbackrest"
+
+# --- Exporter ---
+pgbackrest_exporter_port: "9854"
+pgbackrest_exporter_scrape_interval: "60s"
+
+# --- MinIO (local repo defaults) ---
+minio_api_port: "9000"
+minio_console_port: "9001"
+minio_bucket_name: "supabase-backups"
+
+# --- S3 repo defaults (overridden by env/supabase.yml) ---
+backup_s3_uri_style: "path"   # path for MinIO/R2, host for AWS
+backup_s3_region: "us-east-1"
+backup_s3_verify_tls: true
+
+# --- Storage backup ---
+backup_storage_enabled: true
+
+# --- pgsodium key backup ---
+backup_pgsodium_enabled: true
+
+# --- Monitoring integration ---
+backup_monitoring_enabled: true
+
+# --- Restore defaults ---
+backup_restore_target_action: "promote"
+backup_restore_delta: true

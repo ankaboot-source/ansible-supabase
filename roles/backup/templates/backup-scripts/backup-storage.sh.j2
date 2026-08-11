@@ -1,0 +1,48 @@
+#!/bin/sh
+# Managed by Ansible — do not edit manually.
+# Supabase Storage volume backup.
+# Detects the Storage backend: if external S3, the volume backup is meaningless
+# (the bytes already live off-box). If file backend, tars ./volumes/storage/
+# into the pgbackrest repo (posix) or alongside it (s3/minio).
+set -eu
+
+BACKUP_DIR="/home/{{ deploy_user }}/backup"
+SUPABASE_DIR="/home/{{ deploy_user }}/supabase"
+STANZA="{{ backup_stanza_name }}"
+STORAGE_BACKEND="{{ storage_backend | default('file') }}"
+
+if [ "$STORAGE_BACKEND" = "s3" ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Storage backend is external S3 — volume backup skipped."
+  exit 0
+fi
+
+if [ ! -d "$SUPABASE_DIR/volumes/storage" ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] No $SUPABASE_DIR/volumes/storage directory — nothing to back up."
+  exit 0
+fi
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Backing up Storage volume (file backend)..."
+TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+TAR_NAME="storage-${TIMESTAMP}.tar.gz"
+
+# Tar the storage volume into the pgbackrest repo path (host-side).
+# For posix repo: the repo is at $BACKUP_DIR/volumes/pgbackrest/ — the tar
+# lands inside the repo and is covered by retention/replication.
+# For s3/minio repo: the tar is alongside the repo dir; a future enhancement
+# can rclone-copy it to the bucket. For now it's at least on the backup path.
+mkdir -p "$BACKUP_DIR/volumes/pgbackrest/storage-backups"
+tar -czf "$BACKUP_DIR/volumes/pgbackrest/storage-backups/${TAR_NAME}" \
+  -C "$SUPABASE_DIR/volumes" storage 2>/dev/null
+rc=$?
+if [ $rc -ne 0 ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: storage volume backup failed (exit $rc)" >&2
+  exit $rc
+fi
+
+# Prune old storage backups (keep last 7)
+find "$BACKUP_DIR/volumes/pgbackrest/storage-backups" -name 'storage-*.tar.gz' -type f -mtime +7 -delete 2>/dev/null || true
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Storage volume backup complete: ${TAR_NAME}"
+echo "NOTE: Storage and DB backups are not point-in-time consistent."
+echo "      storage.objects rows (in PG) and the bytes (in the volume) are"
+echo "      backed up at different times — a restore may reference missing"
+echo "      files or leave orphans. See docs/advanced-docs.md."
