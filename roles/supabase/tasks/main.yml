@@ -123,5 +123,114 @@
     - { src: "env-supabase", dest: "/home/{{ deploy_user }}/{{ supabase_path }}/.env", mode: '0664' }
     - { src: "start-supabase.sh", dest: "/home/{{ deploy_user }}/{{ supabase_path }}/start-supabase.sh", mode: '0755' }
 
+- name: Create backup network if needed
+  shell: |
+    NETWORK_NAME="supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+    docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || docker network create "$NETWORK_NAME"
+  when: backup_enabled | default(false) | bool
+
+- name: Prepare backup paths on host
+  copy:
+    dest: "/tmp/prepare-backup-paths.sh"
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+      BACKUP_DIR="/home/{{ deploy_user }}/backup"
+      BIN_DIR="$BACKUP_DIR/pgbackrest-bin"
+      IMAGE="{{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}"
+
+      # Remove Docker-created dirs that shadow our bind-mount sources
+      for p in /usr/bin/pgbackrest "$BIN_DIR/pgbackrest" "$BIN_DIR"/lib*; do
+        [ -e "$p" ] || continue
+        [ -d "$p" ] && rm -rf "$p" || rm -f "$p"
+      done
+
+      # Extract pgbackrest binary + shared libraries from the Docker image
+      if [ ! -f "$BIN_DIR/pgbackrest" ]; then
+        echo "Pulling $IMAGE..."
+        docker pull "$IMAGE"
+        TMPCTR="pgbackrest-extract-$$"
+        docker create --name "$TMPCTR" "$IMAGE"
+        mkdir -p "$BIN_DIR"
+        docker cp "$TMPCTR:/usr/bin/pgbackrest" "$BIN_DIR/pgbackrest"
+        # Copy entire /usr/lib from Alpine image — docker cp doesn't support globs
+        docker cp "$TMPCTR:/usr/lib" "$BIN_DIR/lib-alpine"
+        # Move only the libs pgbackrest needs into the flat BIN_DIR
+        for lib in libbz2.so libcrypto.so libcurl.so libgcrypt.so libgpg-error.so libhistory.so libintl.so libjson-c.so liblz4.so liblzma.so libpcre2.so libpq.so libprotobuf-c.so libssh2.so libssl.so libxml2.so libz.so libzstd.so libc.musl ld-musl; do
+          cp "$BIN_DIR/lib-alpine/${lib}"* "$BIN_DIR/" 2>/dev/null || true
+        done
+        rm -rf "$BIN_DIR/lib-alpine"
+        docker rm "$TMPCTR"
+        chmod 755 "$BIN_DIR/pgbackrest"
+        chown -R root:root "$BIN_DIR"
+        echo "Extracted pgbackrest binary and $(ls "$BIN_DIR"/lib* 2>/dev/null | wc -l) shared libraries"
+      fi
+
+      # Verify extraction succeeded
+      if [ ! -f "$BIN_DIR/pgbackrest" ]; then
+        echo "ERROR: pgbackrest binary not found in $BIN_DIR" >&2
+        exit 1
+      fi
+      missing=""
+      for lib in libpq.so libxml2.so libssl.so libcrypto.so liblz4.so libz.so libzstd.so ld-musl; do
+        ls "$BIN_DIR/${lib}"* >/dev/null 2>&1 || missing="$missing $lib"
+      done
+      if [ -n "$missing" ]; then
+        echo "ERROR: missing shared libraries:$missing" >&2
+        exit 1
+      fi
+
+      # Create wrapper script that sets LD_LIBRARY_PATH only for pgbackrest
+      # (setting it on the container env would poison PostgreSQL's own libraries)
+      printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/usr/lib/pgbackrest-bin\nexec /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' > "$BACKUP_DIR/pgbackrest-wrapper"
+      chmod 755 "$BACKUP_DIR/pgbackrest-wrapper"
+
+      # Ensure pgbackrest.conf placeholder exists (backup role renders the real config)
+      CONF="$BACKUP_DIR/pgbackrest.conf"
+      [ -f "$CONF" ] || install -m 0640 /dev/null "$CONF"
+
+      # Fix ownership for directories that postgres (UID 100) writes to
+      mkdir -p "$BACKUP_DIR/volumes/pgbackrest/lock"
+      mkdir -p "$BACKUP_DIR/volumes/pgbackrest-log"
+      mkdir -p "$BACKUP_DIR/volumes/pgbackrest-spool/archive"
+      chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest"
+      chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest-log"
+      chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest-spool"
+  when: backup_enabled | default(false) | bool
+
+- name: Run backup path preparation
+  command: bash /tmp/prepare-backup-paths.sh
+  when: backup_enabled | default(false) | bool
+
+# --- Render pgbackrest.conf BEFORE the db container is created, so boot-time
+# archive_command reads the correct repo config (and the fresh container binds
+# its inode). Re-rendered by the backup role later (with unsafe_writes). ---
+- name: Render pgbackrest.conf
+  template:
+    src: "{{ playbook_dir }}/roles/backup/templates/pgbackrest.conf.j2"
+    dest: "/home/{{ deploy_user }}/backup/pgbackrest.conf"
+    owner: "100"
+    group: "101"
+    mode: "0644"
+  when: backup_enabled | default(false) | bool
+
+# --- Bring up MinIO before Supabase starts, so WAL archiving resolves on first boot ---
+- name: Render backup compose for MinIO
+  template:
+    src: "{{ playbook_dir }}/roles/backup/templates/docker-compose-backup.yml.j2"
+    dest: "/home/{{ deploy_user }}/backup/docker-compose.yml"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0640"
+  when: (backup_enabled | default(false) | bool) and (backup_repo_type | default('minio')) == 'minio'
+
+- name: Start MinIO
+  command: docker compose up -d minio
+  args:
+    chdir: "/home/{{ deploy_user }}/backup"
+  changed_when: false
+  when: (backup_enabled | default(false) | bool) and (backup_repo_type | default('minio')) == 'minio'
+
 - name: Start Supabase
   command: "bash /home/{{ deploy_user }}/{{ supabase_path }}/start-supabase.sh"

@@ -493,6 +493,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 120s
     command:
       [
         "postgres",
@@ -517,7 +518,7 @@ services:
         "-c",
         "ssl_cert_file=/etc/postgres/certs/server.crt",
         "-c",
-        "ssl_key_file=/etc/postgres/certs/server.key"
+        "ssl_key_file=/etc/postgres/certs/server.key"{{ ', "-c", "archive_mode=on", "-c", "archive_command=pgbackrest --stanza=' + backup_stanza_name + ' archive-push %p"' if backup_enabled | default(false) | bool else '' }}
       ]
     restart: unless-stopped
     ports:
@@ -555,6 +556,15 @@ services:
       - /var/log/postgresql:/var/log/postgresql:Z
       # Mount SSL certs
       - /opt/postgres-certs:/etc/postgres/certs:ro
+      {{ '- /home/' + deploy_user + '/backup/pgbackrest-wrapper:/usr/bin/pgbackrest:ro  # pgBackRest wrapper (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/pgbackrest-bin:/usr/lib/pgbackrest-bin:ro  # pgBackRest binary + shared libs (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro  # pgBackRest config (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/volumes/pgbackrest:/var/lib/pgbackrest:z  # pgBackRest lock dir (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/volumes/pgbackrest-log:/var/log/pgbackrest:z  # pgBackRest logs (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/volumes/pgbackrest-spool:/var/spool/pgbackrest:z  # pgBackRest archive spool (backup role)' if backup_enabled | default(false) | bool else '' }}
+{{ '    networks:' if backup_enabled | default(false) | bool else '' }}
+{{ '      - default' if backup_enabled | default(false) | bool else '' }}
+{{ '      - supabase-backup-net' + ('-' + deploy_env if deploy_env != 'changeit' else '') if backup_enabled | default(false) | bool else '' }}
 
   # Update the DATABASE_URL if you are using an external Postgres database
 
@@ -626,3 +636,5 @@ networks:
     ipam:
       config:
         - subnet: 172.28.0.0/16
+{{ '  supabase-backup-net' + ('-' + deploy_env if deploy_env != 'changeit' else '') + ':' if backup_enabled | default(false) | bool else '' }}
+{{ '    external: true' if backup_enabled | default(false) | bool else '' }}

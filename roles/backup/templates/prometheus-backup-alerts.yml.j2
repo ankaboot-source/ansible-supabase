@@ -1,0 +1,77 @@
+# Managed by Ansible — do not edit manually.
+# Prometheus alert rules for backup (always on, regardless of config)
+# Loaded by Prometheus via rule_files in prometheus.yml
+
+groups:
+  - name: backup-pgbackrest
+    interval: 30s
+    rules:
+      # --- Stanza health ---
+      - alert: PgBackRestStanzaStatus
+        expr: pgbackrest_stanza_status > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "pgBackRest stanza status is not OK (stanza={{ backup_stanza_name }})"
+          description: "Stanza status is {{ '{{' }} $value {{ '}}' }}. 0=OK, 1=missing path, 2=no valid backups. Check pgbackrest info."
+
+      # --- Missed/failed scheduled full backup (age > 25h) ---
+      - alert: PgBackRestFullBackupAge
+        expr: time() - pgbackrest_backup_last_full_timestamp_seconds > 90000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No successful full backup in over 25 hours"
+          description: "Last full backup age: {{ '{{' }} $value | humanizeDuration {{ '}}' }}. Check the backup cron and pgbackrest logs."
+
+      # --- Last backup errored ---
+      - alert: PgBackRestBackupError
+        expr: pgbackrest_backup_last_error > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Last pgBackRest backup errored"
+          description: "pgbackrest_backup_last_error = {{ '{{' }} $value {{ '}}' }}. Inspect the backup logs."
+
+      # --- WAL archive lag (archive_command failing) ---
+      - alert: PgBackRestWalArchiveLag
+        expr: pgbackrest_wal_archive_max - pgbackrest_wal_archive_min > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WAL archive lag is rising"
+          description: "Archive lag: {{ '{{' }} $value {{ '}}' }} segments. archive_command may be failing — pg_wal will accumulate and fill the disk."
+
+      # --- pg_wal disk usage rising (via node_exporter filesystem collector) ---
+      - alert: PgWalDiskUsage
+        expr: (node_filesystem_avail_bytes{mountpoint="{{ supabase_data_path }}"} / node_filesystem_size_bytes{mountpoint="{{ supabase_data_path }}"}) < 0.15
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PGDATA filesystem is over 85% full"
+          description: "Only {{ '{{' }} $value | humanizePercentage {{ '}}' }} free on {{ supabase_data_path }}. If archive-push is failing, pg_wal and the async spool will fill this."
+
+      # --- Verify failure ---
+      - alert: PgBackRestVerifyFailed
+        expr: pgbackrest_stanza_status > 0 and on(stanza) pgbackrest_backup_last_error > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "pgBackRest verify or backup integrity check failed"
+          description: "Daily verify failed — repo integrity may be compromised. Run pgbackrest verify manually."
+
+      # --- Exporter down ---
+      - alert: PgBackRestExporterDown
+        expr: up{job="pgbackrest_exporter"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pgBackRest exporter is down"
+          description: "Prometheus cannot scrape the pgbackrest exporter on :{{ pgbackrest_exporter_port }}."
