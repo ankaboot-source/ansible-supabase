@@ -1,0 +1,87 @@
+---
+# Manifest path is a hardwired contract — do NOT make it configurable.
+# See AGENTS.md: defaults are for constants only; this constant lives in
+# tasks because it controls the file system layout, not a knob.
+
+- name: Ensure /etc/supabase directory exists
+  ansible.builtin.file:
+    path: /etc/supabase
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Check for existing manifest
+  ansible.builtin.stat:
+    path: /etc/supabase/instance.json
+  register: manifest_existing
+
+- name: Read existing manifest
+  ansible.builtin.slurp:
+    src: /etc/supabase/instance.json
+  register: manifest_existing_raw
+  when: manifest_existing.stat.exists
+  failed_when: false
+
+- name: Preserve installed_at from existing manifest
+  ansible.builtin.set_fact:
+    manifest_installed_at: "{{ (manifest_existing_raw.content | b64decode | from_json).supabase.installed_at | default('') }}"
+  when:
+    - manifest_existing.stat.exists
+    - manifest_existing_raw is defined
+    - manifest_existing_raw.content is defined
+  failed_when: false
+
+- name: Render instance manifest
+  ansible.builtin.template:
+    src: instance.json.j2
+    dest: /etc/supabase/instance.json
+    owner: root
+    group: root
+    mode: "0644"
+  tags:
+    - manifest
+
+- name: Assert postgres_db_pwd is not in the manifest
+  ansible.builtin.command: grep -F -c '{{ postgres_db_pwd }}' /etc/supabase/instance.json
+  register: _manifest_leak_postgres
+  changed_when: false
+  failed_when: _manifest_leak_postgres.rc == 0
+  when:
+    - postgres_db_pwd | default('') | length > 0
+    - postgres_db_pwd != 'changeit'
+  tags:
+    - manifest
+
+- name: Assert sb_jwt_secret is not in the manifest
+  ansible.builtin.command: grep -F -c '{{ sb_jwt_secret }}' /etc/supabase/instance.json
+  register: _manifest_leak_jwt
+  changed_when: false
+  failed_when: _manifest_leak_jwt.rc == 0
+  when:
+    - sb_jwt_secret | default('') | length > 0
+    - sb_jwt_secret != 'changeit'
+  tags:
+    - manifest
+
+- name: Assert sb_anon_key is not in the manifest
+  ansible.builtin.command: grep -F -c '{{ sb_anon_key }}' /etc/supabase/instance.json
+  register: _manifest_leak_anon
+  changed_when: false
+  failed_when: _manifest_leak_anon.rc == 0
+  when:
+    - sb_anon_key | default('') | length > 0
+    - sb_anon_key != 'changeit'
+  tags:
+    - manifest
+
+- name: Assert sb_service_role_key is not in the manifest
+  ansible.builtin.command: grep -F -c '{{ sb_service_role_key }}' /etc/supabase/instance.json
+  register: _manifest_leak_svc
+  changed_when: false
+  failed_when: _manifest_leak_svc.rc == 0
+  when:
+    - sb_service_role_key | default('') | length > 0
+    - sb_service_role_key != 'changeit'
+  tags:
+    - manifest

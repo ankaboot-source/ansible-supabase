@@ -12,7 +12,13 @@
 #   sudo bash setup.sh              # generate + deploy
 #   bash setup.sh --dry-run         # preview without modifying files
 #   bash setup.sh --yes             # non-interactive (AI-friendly)
+#   bash setup.sh --force           # regenerate secrets even if env is locked
 #   bash setup.sh --help
+# =============================================================================
+# Locking: after the first successful render of env/supabase.yml, a lock file
+# (env/.setup.lock) is written. On subsequent runs, the secrets block is
+# skipped (preserving the already-rendered secrets) unless --force is passed.
+# This prevents overwriting keys that running Supabase services depend on.
 # =============================================================================
 
 set -euo pipefail
@@ -23,10 +29,12 @@ EXAMPLE_CONFIG="${SCRIPT_DIR}/config.example.yml"
 ENV_FILE="${SCRIPT_DIR}/env/supabase.yml"
 PLAYBOOK_FILE="${SCRIPT_DIR}/playbook-supabase.yml"
 GENERATE_KEYS="${SCRIPT_DIR}/generate-keys.sh"
+LOCK_FILE="${SCRIPT_DIR}/env/.setup.lock"
 
 DRY_RUN=0
 ASSUME_YES=0
 VERBOSE=0
+FORCE=0
 
 # ─── Colors ──────────────────────────────────────────────────────────────────
 if [[ -t 1 ]]; then
@@ -39,6 +47,7 @@ log()     { printf "${BLUE}[setup]${NC} %s\n" "$*"; }
 ok()      { printf "${GREEN}[ok]${NC} %s\n" "$*"; }
 warn()    { printf "${YELLOW}[warn]${NC} %s\n" "$*" >&2; }
 die()     { printf "${RED}[error]${NC} %s\n" "$*" >&2; exit 1; }
+locklog() { printf "${YELLOW}[lock]${NC} %s\n" "$*"; }
 
 # ─── Help ────────────────────────────────────────────────────────────────────
 usage() {
@@ -51,6 +60,7 @@ Usage:
 Options:
   --dry-run        Preview actions without modifying any files
   --yes            Non-interactive (skip confirmation prompts) — for AI/CI
+  --force          Regenerate secrets even if env/supabase.yml is already locked
   -v, --verbose    Verbose output
   -h, --help       Show this help and exit
 
@@ -73,6 +83,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)  DRY_RUN=1; shift ;;
     --yes)      ASSUME_YES=1; shift ;;
+    --force)    FORCE=1; shift ;;
     -v|--verbose) VERBOSE=1; shift ;;
     -h|--help)  usage; exit 0 ;;
     *) die "Unknown option: $1 (try --help)" ;;
@@ -330,8 +341,32 @@ if [[ -n "$deploy_env" && "$deploy_env" != "changeit" ]]; then
   set_env_var "deploy_env" "$deploy_env"
 fi
 
+# ─── Lock detection ──────────────────────────────────────────────────────────
+# A lock file (env/.setup.lock) marks that env/supabase.yml has already been
+# rendered with secrets. On a second run we MUST NOT regenerate or clobber
+# those secrets — running Supabase services depend on them. --force overrides.
+ENV_LOCKED=0
+if [[ -f "$LOCK_FILE" ]]; then
+  ENV_LOCKED=1
+  if [[ $FORCE -eq 1 ]]; then
+    locklog "Lock file found but --force given; secrets will be regenerated."
+  else
+    locklog "env/supabase.yml is already rendered (lock: $LOCK_FILE)."
+    locklog "Secrets will be preserved. Run with --force to regenerate them."
+  fi
+fi
+
 # Secrets
-if cfg_bool "secrets.generate"; then
+if [[ $ENV_LOCKED -eq 1 && $FORCE -eq 0 ]]; then
+  # Locked and not forced: skip the entire secrets block so the existing
+  # values in env/supabase.yml are left untouched. This covers BOTH failure
+  # modes from issue #127:
+  #   1. secrets.generate: true  → would overwrite existing keys with fresh
+  #      ones, breaking running services.
+  #   2. secrets.generate: false → would write `changeit` placeholders back
+  #      over the previously-generated secrets, clobbering them.
+  log "Skipping secret generation (env is locked)."
+elif cfg_bool "secrets.generate"; then
   log "Auto-generating cryptographic secrets…"
   jwt_secret="$(gen_b64 30)"
   iat="$(date +%s)"
@@ -522,6 +557,24 @@ fi
 
 ok "env/supabase.yml rendered."
 
+# ─── Write lock file ─────────────────────────────────────────────────────────
+# Mark env/supabase.yml as rendered so subsequent runs don't clobber secrets.
+# The lock is a small JSON record. --force rewrites it; --dry-run never does.
+python3 - "$LOCK_FILE" "$CONFIG_FILE" <<'PYEOF'
+import sys, json, os, time
+lock_path, cfg_path = sys.argv[1], sys.argv[2]
+record = {
+    "rendered_at": int(time.time()),
+    "config_file": cfg_path,
+    "note": "env/supabase.yml has been rendered with secrets. Re-run setup.sh with --force to regenerate.",
+}
+os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+with open(lock_path, "w") as f:
+    json.dump(record, f, indent=2)
+    f.write("\n")
+PYEOF
+ok "Lock written: $LOCK_FILE"
+
 # ─── Playbook component toggling ─────────────────────────────────────────────
 # Regenerate playbook-supabase.yml deterministically from the component toggles.
 # This avoids fragile line-by-line uncommenting and keeps the playbook structure
@@ -535,20 +588,42 @@ with open(cfg_path) as f:
     cfg = yaml.safe_load(f)
 components = cfg.get("components", {}) or {}
 
-# Preserve the original header (everything up to and including the supabase
-# prerequisite role + the advanced-roles banner comment), then append the
-# enabled roles in a fixed canonical order.
-with open(path) as f:
-    original = f.read()
+# Build the new playbook. The bootstrap play runs first with gather_facts: false
+# to install Python on minimal cloud images / Arch (which ships `python` only),
+# then the main play runs the always-on roles (docker, supabase, manifest,
+# agent_access) followed by the enabled advanced roles in a fixed canonical
+# order. The manifest + agent_access roles are always-on (not component-toggled)
+# because the instance manifest is a contract and SSH-stdio agent access is
+# part of the default deployment.
 
-# Build the new roles list. Prerequisites are always present.
-header = """---
+bootstrap_play = """---
+# Bootstrap Python on minimal targets before anything else.
+# Arch ships `python` only; minimal Ubuntu cloud images may ship no python3.
+# gather_facts: false + raw bootstrap keeps this distro-independent.
+- hosts: localhost
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Bootstrap Python (distro-aware)
+      ansible.builtin.raw: |
+        if [ -x /usr/bin/apt-get ]; then
+          apt-get update -qq && apt-get install -y -qq python3 python3-apt
+        elif [ -x /usr/bin/pacman ]; then
+          pacman -Sy --noconfirm python
+        else
+          exit 1
+        fi
+"""
+
+main_play_header = """
 - hosts: localhost
   become: true
   roles:
-   # Prerequisite — always needed
-   - docker
-   - supabase
+   # ─── Always-on (prerequisites + instance contract) ───
+   - docker                    # Docker Engine + Compose v2 (Debian family + Arch)
+   - supabase                  # Full Supabase stack
+   - manifest                  # /etc/supabase/instance.json — instance contract
+   - agent_access              # SSH-stdio MCP agent + info CLI
 
    # ─── Advanced Roles ───────────────────────────────
    # Enabled via config.yml (components). See docs/advanced-docs.md.
@@ -569,7 +644,7 @@ if components.get("fail2ban"):
 if components.get("backup"):
     role_lines.append("   - backup                  # Automated backups + PITR (pgBackRest)")
 
-content = header
+content = bootstrap_play + main_play_header
 if role_lines:
     content += "\n".join(role_lines) + "\n"
 else:

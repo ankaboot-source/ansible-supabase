@@ -48,6 +48,12 @@ required:
 # By default these are auto-generated on first run. Most users leave this alone.
 # Set `generate: false` ONLY if you want to provide your own keys (e.g. migrating
 # an existing stack).
+#
+# LOCKING: after the first successful run, setup.sh writes env/.setup.lock.
+# On subsequent runs the secrets in env/supabase.yml are PRESERVED as-is —
+# they are NOT regenerated and NOT overwritten with placeholders — so running
+# Supabase services keep working. To force regeneration (e.g. you rotated
+# keys on purpose), run:  sudo bash setup.sh --force
 secrets:
   generate: true
   # The values below are used ONLY when generate: false. Leave as changeit otherwise.

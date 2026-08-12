@@ -3,7 +3,7 @@
 **The AI-ready Supabase distribution for production self-hosting.** Point your coding
 agent at your own server and build — with the developer experience you get from
 Supabase Cloud, on a stack that ships with SSO, point-in-time recovery, monitoring
-and disk encryption.
+and disk encryption. Runs on Debian, Ubuntu and Arch.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -46,6 +46,20 @@ component, or rebuild the box — not a one-shot script you can never run twice.
 
 <!-- Marketing note: a ~40s asciinema recording of `sudo bash setup.sh` belongs here. -->
 
+### Server support matrix
+
+All Tier 1 targets — full stack CI on every PR:
+
+| Target | Notes |
+|--------|-------|
+| Ubuntu 24.04, Ubuntu 22.04 | the default assumption in this README |
+| Debian 12 | |
+| Arch | rolling, tracks upstream Docker |
+
+Out of scope (stated here so nobody discovers it at run time): **RHEL family** (SELinux needs its own work) and **Manjaro as a server target** (it's a desktop distro — it appears in this repo only on the client side, in [docs/connect-your-agent.md](docs/connect-your-agent.md)).
+
+The role detects the distro family from `ID_LIKE` in `/etc/os-release` (never `ID` — Mint and Pop!\_OS report `ID_LIKE=ubuntu debian`, which buys most derivatives for free).
+
 ---
 
 ## 📑 Table of Contents
@@ -53,9 +67,10 @@ component, or rebuild the box — not a one-shot script you can never run twice.
 - [🚀 Quick Start](#-quick-start)
 - [🎁 What You Get](#-what-you-get)
 - [📦 What Gets Deployed](#-what-gets-deployed)
+- [🤖 Connect Your AI Agent](#-connect-your-ai-agent)
 - [🔒 Optional Hardening](#-optional-hardening)
 - [🚚 Migration from Supabase Cloud](#-migration-from-supabase-cloud)
-- [🤖 Secure MCP Remote Access](#-secure-mcp-remote-access)
+- [🔒 Secure MCP Remote Access](#-secure-mcp-remote-access)
 - [🔧 Manual Installation](#-manual-installation)
 - [💬 Support](#-support)
 - [📄 License](#-license)
@@ -66,7 +81,7 @@ component, or rebuild the box — not a one-shot script you can never run twice.
 
 ### Prerequisites
 
-- A **Debian/Ubuntu server** with root or sudo access
+- A **Debian 12, Ubuntu 22.04/24.04, or Arch Linux server** with root or sudo access (see the [server support matrix](#server-support-matrix) above)
 - A **domain** with three DNS A records pointing to your server:
   - `sb.example.com` — Supabase dashboard + API
   - `auth.example.com` — OAuth2 authentication endpoint
@@ -133,8 +148,11 @@ advanced:
 |------|-------------|
 | `--dry-run` | Preview what would happen without modifying any files |
 | `--yes` | Non-interactive (skip confirmation prompts) — ideal for CI/AI agents |
+| `--force` | Regenerate secrets even if `env/supabase.yml` is already locked |
 | `-v, --verbose` | Verbose output |
 | `-h, --help` | Show help |
+
+> **Locking:** after the first successful render, `setup.sh` writes `env/.setup.lock`. Subsequent runs **preserve the existing secrets** in `env/supabase.yml` — they are neither regenerated nor overwritten with placeholders — so already-running Supabase services keep working. Pass `--force` to regenerate secrets on purpose (e.g. after a key rotation). `--dry-run` never writes the lock.
 
 ```bash
 bash setup.sh --dry-run       # preview, no changes
@@ -164,9 +182,8 @@ shows real values on a terminal and redacts them the moment its output is piped.
 Read-only is not the same as harmless — read access to a database is still access to
 the data in it. Give an agent this the way you would give it a read replica.
 
-Setup for Claude Code, Codex, opencode and pi:
-[docs/connect-your-agent.md](docs/connect-your-agent.md). The whole stack is documented
-for agents in [`AGENTS.md`](AGENTS.md).
+How to wire it up: [Connect Your AI Agent](#-connect-your-ai-agent) below. The whole
+stack is documented for agents in [`AGENTS.md`](AGENTS.md).
 
 ### You don't lose your database
 
@@ -226,6 +243,56 @@ unlock on boot.
 
 Plus the security and monitoring stack: **Caddy** (reverse proxy + TLS + SSO), **UFW**
 firewall, **Fail2ban**, and **Grafana / Prometheus / Loki**.
+
+Every deployment also writes:
+- **`/etc/supabase/instance.json`** — the instance manifest (JSON contract: ports, container names, endpoints, secret *locations*). No secret values, ever.
+- **`/usr/local/bin/supabase-agent`** — an MCP server over SSH stdio for AI agents (read-only tools, no secret values).
+- **`/usr/local/bin/supabase-selfhosted`** — a CLI to read the manifest and resolve secrets (TTY-aware redaction).
+
+---
+
+## 🤖 Connect Your AI Agent
+
+Every deployment writes an **instance manifest** to `/etc/supabase/instance.json` — a JSON contract describing the instance (database ports, container names, endpoints, secret *locations* — never secret *values*). It also generates an ed25519 SSH key restricted to running `/usr/local/bin/supabase-agent`, an MCP server over stdio that exposes read-only tools (no secret values ever).
+
+At the end of a fresh deployment, the playbook prints the private key **once**, plus a ready-to-paste `~/.ssh/config` block and an MCP client config snippet. To connect your agent (Claude Code, Codex, opencode, pi — they all take the same `{command, args}` shape), follow the one-page guide:
+
+**[docs/connect-your-agent.md](docs/connect-your-agent.md)**
+
+Then verify the connection with:
+
+```bash
+sh scripts/verify-connection.sh ~/.ssh/supabase-agent-<host> supabase-agent
+```
+
+The verify script is POSIX-clean and runs on both GNU and BSD userland (Linux + macOS).
+
+### Reading secrets back
+
+`supabase-selfhosted info` reads the manifest and resolves the secret references against the `.env` file. **The default flips on whether stdout is a TTY**: a human at a terminal gets the real values (the "what was my service_role key again" recovery path); a pipe, file, or captured stream gets `••••` plus the reference.
+
+```bash
+# On the server, at a terminal — shows real values:
+supabase-selfhosted info
+
+# Piped (redacted):
+supabase-selfhosted info | cat
+
+# Force reveal (for `| pbcopy`):
+supabase-selfhosted info --show-secrets | pbcopy
+
+# Force redaction (for screen sharing):
+supabase-selfhosted info --no-secrets
+
+# JSON output (redacted unless --show-secrets):
+supabase-selfhosted info --json
+```
+
+The MCP agent connects with `no-pty`, so it never sees a value it didn't explicitly ask for — and **no MCP tool returns secret values**.
+
+### v2 (deferred)
+
+This is **v1**: the playbook writes nothing on your machine — it prints a snippet, and the docs explain where to put it. **v2** will automate the client side: generate the key into `~/.ssh`, write the `Host` block behind managed markers, and update agent config files (backed up first). It's the difference between "paste one block" and "nothing to paste", and it isn't worth blocking the server work on.
 
 ---
 
@@ -329,7 +396,7 @@ Design and test matrix:
 
 ---
 
-## 🤖 Secure MCP Remote Access
+## 🔒 Secure MCP Remote Access
 
 The Supabase MCP server is exposed at `/mcp` through the Kong gateway (routed to
 Studio's `/api/mcp`). It is **never publicly reachable** — Kong's `ip-restriction`

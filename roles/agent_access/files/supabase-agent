@@ -1,0 +1,415 @@
+#!/usr/bin/env python3
+"""supabase-agent — MCP server over SSH stdio.
+
+JSON-RPC 2.0, newline-delimited. Exposes read-only tools over a Supabase
+self-hosted instance. No pip dependencies — stdlib only.
+
+The initialize handshake works even if the instance manifest is missing
+or unreadable; only tool calls require the manifest. This is so a
+freshly-deployed server can still respond to a byte-test MCP `initialize`
+before the manifest role has run.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+from typing import Any, Dict, List, Optional, Tuple
+
+SERVER_NAME = "supabase-agent"
+SERVER_VERSION = "0.1.0"
+PROTOCOL_VERSION = "2024-11-05"
+
+MANIFEST_ENV = "SUPABASE_INSTANCE_MANIFEST"
+DEFAULT_MANIFEST = "/etc/supabase/instance.json"
+
+# Tools that are blocked in the `query` tool. Word-boundary match,
+# case-insensitive. Safety guard, not a security boundary.
+_FORBIDDEN_SQL = [
+    "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE",
+    "CREATE", "GRANT", "REVOKE", "COPY",
+]
+# Allowed leading verbs (SELECT or WITH for CTEs).
+_ALLOWED_SQL_LEAD = ("SELECT", "WITH")
+
+# Container names are tightly restricted so a malicious caller cannot
+# pivot through `docker inspect` to other services on the host.
+_CONTAINER_NAME_RE = re.compile(r"^supabase-[a-z][a-z0-9-]*$")
+
+
+def _log(msg: str) -> None:
+    """Log to stderr — stdout is the JSON-RPC channel."""
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _resolve_manifest_path() -> str:
+    """Resolve the manifest path: env var wins, then default."""
+    env = os.environ.get(MANIFEST_ENV, "").strip()
+    if env:
+        return env
+    return DEFAULT_MANIFEST
+
+
+def _load_manifest() -> Dict[str, Any]:
+    """Load and parse the instance manifest. Raises on any error."""
+    path = _resolve_manifest_path()
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _load_manifest_lazy() -> Optional[Dict[str, Any]]:
+    """Try to load the manifest. Return None on any failure — used by
+    tool dispatch so a missing manifest surfaces as a tool error, not
+    a startup crash."""
+    try:
+        return _load_manifest()
+    except Exception as exc:  # noqa: BLE001
+        _log(f"manifest load failed: {exc}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Tool implementations
+# ---------------------------------------------------------------------------
+
+def _run(cmd: List[str], timeout: int = 30) -> Tuple[int, str, str]:
+    """Run a subprocess, capture stdout/stderr, return (rc, stdout, stderr)."""
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", f"timeout after {timeout}s: {' '.join(cmd)}"
+    except FileNotFoundError as exc:
+        return 127, "", f"command not found: {exc}"
+
+
+def _db_container(manifest: Dict[str, Any]) -> str:
+    return str(manifest.get("containers", {}).get("db", "supabase-db"))
+
+
+def _psql(db: str, sql: str, flags: str = "-c") -> Tuple[int, str, str]:
+    return _run([
+        "docker", "exec", db, "psql",
+        "-U", "postgres", "-d", "postgres", flags, sql,
+    ])
+
+
+def tool_list_tables(manifest: Dict[str, Any]) -> Dict[str, Any]:
+    sql = "SELECT schemaname || '.' || tablename FROM pg_tables " \
+          "WHERE schemaname NOT IN ('pg_catalog','information_schema') " \
+          "ORDER BY 1;"
+    rc, out, err = _psql(_db_container(manifest), sql, flags="-t -A -F $'\\t'")
+    if rc != 0:
+        return _tool_error(f"psql failed (rc={rc}): {err.strip()}")
+    return _tool_text(out)
+
+
+def tool_describe_table(args: Dict[str, Any], manifest: Dict[str, Any]) -> Dict[str, Any]:
+    table = str(args.get("table", "")).strip()
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$", table):
+        return _tool_error("invalid table name (use [schema.]table, alnum + underscore)")
+    rc, out, err = _psql(_db_container(manifest), f"\\d {table}")
+    if rc != 0:
+        return _tool_error(f"describe failed (rc={rc}): {err.strip()}")
+    return _tool_text(out)
+
+
+def tool_query(args: Dict[str, Any], manifest: Dict[str, Any]) -> Dict[str, Any]:
+    sql = str(args.get("sql", "")).strip()
+    if not sql:
+        return _tool_error("empty sql")
+
+    # Strip a single leading comment, then check the first keyword.
+    head = sql
+    stripped = re.sub(r"^--.*\n", "", head, count=1).lstrip()
+    first_word = stripped.split(None, 1)[0].upper() if stripped else ""
+    if first_word not in _ALLOWED_SQL_LEAD:
+        return _tool_error(
+            f"only SELECT/WITH queries are allowed (got leading verb {first_word!r})"
+        )
+
+    # Word-boundary check for forbidden verbs.
+    upper = sql.upper()
+    for verb in _FORBIDDEN_SQL:
+        if re.search(rf"\b{verb}\b", upper):
+            return _tool_error(f"forbidden verb in query: {verb}")
+
+    rc, out, err = _psql(_db_container(manifest), sql, flags="-t -A -F $'\\t'")
+    if rc != 0:
+        return _tool_error(f"psql failed (rc={rc}): {err.strip()}")
+    return _tool_text(out)
+
+
+def tool_list_containers(_args: Dict[str, Any], _manifest: Dict[str, Any]) -> Dict[str, Any]:
+    rc, out, err = _run(["docker", "ps", "--format", "{{.Names}}\t{{.Status}}"])
+    if rc != 0:
+        return _tool_error(f"docker ps failed (rc={rc}): {err.strip()}")
+    filtered = "\n".join(
+        line for line in out.splitlines() if line.startswith("supabase-")
+    )
+    return _tool_text(filtered or "(no supabase-* containers running)")
+
+
+def tool_container_status(args: Dict[str, Any], _manifest: Dict[str, Any]) -> Dict[str, Any]:
+    name = str(args.get("container", "")).strip()
+    if not _CONTAINER_NAME_RE.match(name):
+        return _tool_error(
+            "invalid container name (must match ^supabase-[a-z][a-z0-9-]*$)"
+        )
+    rc, out, err = _run(["docker", "inspect", name])
+    if rc != 0:
+        return _tool_error(f"docker inspect failed (rc={rc}): {err.strip()}")
+    try:
+        parsed = json.loads(out)
+        return _tool_text(json.dumps(parsed, indent=2))
+    except json.JSONDecodeError:
+        return _tool_text(out)
+
+
+def tool_get_manifest(_args: Dict[str, Any], manifest: Dict[str, Any]) -> Dict[str, Any]:
+    return _tool_text(json.dumps(manifest, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# Tool registry
+# ---------------------------------------------------------------------------
+
+TOOL_SCHEMAS: List[Dict[str, Any]] = [
+    {
+        "name": "list_tables",
+        "description": "List user tables in the Supabase Postgres instance.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "describe_table",
+        "description": "Describe a single table (\\d <table>).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "table": {
+                    "type": "string",
+                    "description": "Table name, optionally schema-qualified.",
+                },
+            },
+            "required": ["table"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "query",
+        "description": "Run a read-only SQL query. SELECT/WITH only; no DDL or DML.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "sql": {"type": "string", "description": "SQL to execute."},
+            },
+            "required": ["sql"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "list_containers",
+        "description": "List running supabase-* containers (name + status).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "container_status",
+        "description": "docker inspect a single supabase-* container.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "container": {
+                    "type": "string",
+                    "description": "Container name (supabase-* only).",
+                },
+            },
+            "required": ["container"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_manifest",
+        "description": "Return the parsed instance manifest (no secret values).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+]
+
+
+TOOL_DISPATCH = {
+    "list_tables": tool_list_tables,
+    "describe_table": tool_describe_table,
+    "query": tool_query,
+    "list_containers": tool_list_containers,
+    "container_status": tool_container_status,
+    "get_manifest": tool_get_manifest,
+}
+
+
+# ---------------------------------------------------------------------------
+# Result helpers
+# ---------------------------------------------------------------------------
+
+def _tool_text(text: str) -> Dict[str, Any]:
+    return {"content": [{"type": "text", "text": text}]}
+
+
+def _tool_error(message: str) -> Dict[str, Any]:
+    return {"content": [{"type": "text", "text": f"ERROR: {message}"}], "isError": True}
+
+
+# ---------------------------------------------------------------------------
+# JSON-RPC framing
+# ---------------------------------------------------------------------------
+
+def _make_response(req_id: Any, result: Any) -> Dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+
+def _make_error(req_id: Any, code: int, message: str) -> Dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "error": {"code": code, "message": message},
+    }
+
+
+def _write_response(resp: Dict[str, Any]) -> None:
+    """Write a single JSON-RPC response line to stdout (the protocol channel)."""
+    sys.stdout.write(json.dumps(resp, separators=(",", ":")))
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+# ---------------------------------------------------------------------------
+# Method dispatch
+# ---------------------------------------------------------------------------
+
+def _method_initialize(_params: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "protocolVersion": PROTOCOL_VERSION,
+        "capabilities": {"tools": {}},
+        "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+    }
+
+
+def _method_tools_list(_params: Dict[str, Any]) -> Dict[str, Any]:
+    return {"tools": TOOL_SCHEMAS}
+
+
+def _method_tools_call(params: Dict[str, Any]) -> Dict[str, Any]:
+    name = str(params.get("name", "")).strip()
+    args = params.get("arguments", {}) or {}
+    if name not in TOOL_DISPATCH:
+        return _tool_error(f"unknown tool: {name!r}")
+
+    manifest = _load_manifest_lazy()
+    if manifest is None:
+        return _tool_error(
+            "instance manifest not available — check "
+            f"${MANIFEST_ENV} or {DEFAULT_MANIFEST}"
+        )
+
+    try:
+        return TOOL_DISPATCH[name](args, manifest)
+    except Exception as exc:  # noqa: BLE001
+        return _tool_error(f"{type(exc).__name__}: {exc}")
+
+
+_METHODS = {
+    "initialize": _method_initialize,
+    "tools/list": _method_tools_list,
+    "tools/call": _method_tools_call,
+}
+
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+
+def _handle_message(msg: Dict[str, Any]) -> None:
+    req_id = msg.get("id")
+    method = str(msg.get("method", ""))
+    params = msg.get("params") or {}
+
+    if method in _METHODS:
+        try:
+            result = _METHODS[method](params)
+            _write_response(_make_response(req_id, result))
+        except Exception as exc:  # noqa: BLE001
+            _write_response(_make_error(req_id, -32603, f"internal error: {exc}"))
+        return
+
+    # Notifications (no id) are silently dropped for unknown methods.
+    if req_id is None:
+        _log(f"ignoring unknown notification: {method}")
+        return
+
+    _write_response(_make_error(req_id, -32601, f"method not found: {method}"))
+
+
+def _stdin_reader(put) -> None:
+    """Read lines from stdin and hand them to `put` (a queue)."""
+    for line in sys.stdin:
+        put(line)
+    put(None)  # EOF sentinel
+
+
+def main() -> int:
+    # Set stdin to line-buffered if it's a tty, but the typical case is a
+    # pipe — leave the default buffering alone; for line-by-line reads from
+    # a pipe, Python already delivers lines as they arrive on Linux.
+    try:
+        import queue
+        q: "queue.Queue[Optional[str]]" = queue.Queue()
+        reader = threading.Thread(target=_stdin_reader, args=(q.put,), daemon=True)
+        reader.start()
+
+        while True:
+            raw = q.get()
+            if raw is None:
+                break  # EOF
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError as exc:
+                # No id, so this is a parse error for a notification — log
+                # and continue.
+                _log(f"malformed JSON (skipping): {exc}: {line[:120]}")
+                continue
+            if not isinstance(msg, dict):
+                _log(f"non-object message (skipping): {type(msg).__name__}")
+                continue
+            _handle_message(msg)
+    except KeyboardInterrupt:
+        _log("interrupted")
+        return 0
+    except BrokenPipeError:
+        # Client hung up mid-write — exit cleanly.
+        return 0
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

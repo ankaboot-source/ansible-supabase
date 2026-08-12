@@ -1,14 +1,32 @@
 ---
+# Bootstrap Python on minimal targets before anything else.
+# Arch ships `python` only; minimal Ubuntu cloud images may ship no python3.
+# gather_facts: false + raw bootstrap keeps this distro-independent.
+- hosts: localhost
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Bootstrap Python (distro-aware)
+      ansible.builtin.raw: |
+        if [ -x /usr/bin/apt-get ]; then
+          apt-get update -qq && apt-get install -y -qq python3 python3-apt
+        elif [ -x /usr/bin/pacman ]; then
+          pacman -Sy --noconfirm python
+        else
+          exit 1
+        fi
+
 - hosts: localhost
   become: true
   roles:
-   # Prerequisite — always needed
-   - docker
-   - supabase
+   # ─── Always-on (prerequisites + instance contract) ───
+   - docker                    # Docker Engine + Compose v2 (Debian family + Arch)
+   - supabase                  # Full Supabase stack
+   - manifest                  # /etc/supabase/instance.json — instance contract
+   - agent_access              # SSH-stdio MCP agent + info CLI
 
    # ─── Advanced Roles ───────────────────────────────
-   # Uncomment the lines below to enable additional features.
-   # See docs/advanced-docs.md for detailed configuration.
+   # Enabled via config.yml (components). See docs/advanced-docs.md.
 
    # - ufw                     # Firewall — allow/deny rules per port
    # - role: luks              # At-rest disk encryption (LUKS)

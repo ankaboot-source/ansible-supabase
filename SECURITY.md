@@ -46,8 +46,7 @@ discover them the hard way.
 
 Use GitHub's private vulnerability reporting on this repository (Security →
 Report a vulnerability), which keeps the discussion private until there is a fix.
-If you would rather use email, the contact address on
-[ankaboot.io](https://ankaboot.io/) reaches us.
+If you would rather use email, write to **ops@ankaboot.io**.
 
 Useful things to include: what you did, what happened, which components were
 enabled in `config.yml`, and roughly which version or commit you deployed.
@@ -60,6 +59,19 @@ quickly, slowly, or not at all. There is no bug bounty, and we would rather say
 that plainly than imply a process we do not run.
 
 If you want credit in the fix, say so and you will get it.
+
+## Going further than the defaults
+
+The defaults here are meant to be sane for a server on the internet. They are not
+a security programme, and some situations need one — a regulated workload, a data
+residency requirement you have to evidence, a threat model that goes beyond
+"don't leave the dashboard open", or simply someone accountable for the thing at
+3am.
+
+If that is where you are, **ops@ankaboot.io**. We deploy and operate this stack in
+production and can help with hardening reviews, key management, backup and restore
+drills, and running it for you. Paid work, stated plainly so nobody mistakes this
+file for a sales page.
 
 ## Which project to report to
 
