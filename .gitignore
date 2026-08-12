@@ -7,6 +7,10 @@
 # Ansible retry files
 *.retry
 
+# Python bytecode cache
+__pycache__/
+*.pyc
+
 # Editor / OS
 .DS_Store
 *.swp
