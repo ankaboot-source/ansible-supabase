@@ -296,6 +296,18 @@ gen_jwt() {
 # sed helper: replace a `key: value` line in env/supabase.yml (anchored at line start).
 set_env_var() {
   local key="$1" val="$2"
+  # cfg_get yields an empty string for a key that is absent from config.yml,
+  # and writing that would replace the shipped default in env/supabase.yml with
+  # nothing. env/supabase.yml is passed as extra-vars, which outrank role
+  # defaults, so the blank wins everywhere — which is how backup_creds_source,
+  # defaulted to "env" in both env/supabase.yml and roles/backup/defaults,
+  # still reached the backup role empty and tripped its assertion. 33 of the
+  # calls here read optional advanced.* keys, so this was latent in all of
+  # them. Absent means "keep the default": skip rather than blank.
+  # Callers that need to clear a value pass an explicit one.
+  if [[ -z "$val" ]]; then
+    return 0
+  fi
   # Escape forward slashes and ampersands for sed replacement.
   local escaped
   escaped="$(printf '%s' "$val" | sed -e 's/[\/&]/\\&/g')"

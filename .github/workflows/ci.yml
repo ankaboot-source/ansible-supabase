@@ -308,7 +308,7 @@ jobs:
           sudo docker exec supabase-db psql -U supabase_admin -d postgres -Xc \
             "select name, setting from pg_settings where name in ('archive_mode','archive_command');" 2>&1 || true
           sudo docker exec supabase-db psql -U supabase_admin -d postgres -Xc \
-            "select archived_count, failed_count, last_failed_error from pg_stat_archiver;" 2>&1 || true
+            "select archived_count, failed_count, last_failed_wal, last_failed_time from pg_stat_archiver;" 2>&1 || true
           echo "::endgroup::"
 
       - name: Container logs on failure
@@ -320,9 +320,9 @@ jobs:
           # useful line was unfindable — three failures were diagnosed against
           # a log whose own diagnostics had scrolled off the top.
           suspects="$(sudo docker ps -a --format '{{.Names}}\t{{.Status}}' \
-            | grep -Ei 'unhealthy|restarting|exited|starting' | cut -f1 || true)"
+            | grep -Ei 'unhealthy|restarting|exited|starting|created' | cut -f1 || true)"
           if [ -z "$suspects" ]; then
-            echo "No container is unhealthy, restarting or exited."
+            echo "No container is unhealthy, restarting, exited or stuck created."
             suspects="$(sudo docker ps -a --format '{{.Names}}')"
             echo "Falling back to all containers, 25 lines each."
             tail_n=25
