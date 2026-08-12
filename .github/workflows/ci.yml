@@ -3,8 +3,6 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -132,17 +130,20 @@ jobs:
       - name: Report available disk
         run: df -h /
 
+      # Domains use the reserved .invalid TLD (RFC 2606): guaranteed never to
+      # resolve, and — unlike sb.example.com — not on the placeholder deny-list
+      # that roles/supabase asserts against.
       - name: Write config.yml
         run: |
           cat > config.yml <<'YAML'
           required:
             deploy_user: runner
-            site_url: https://app.example.com
-            api_external_url: https://sb.example.com
-            supabase_domain: sb.example.com
-            smtp_admin_email: ci@example.com
-            smtp_host: smtp.example.com
-            smtp_user: ci@example.com
+            site_url: https://app.ci.invalid
+            api_external_url: https://sb.ci.invalid
+            supabase_domain: sb.ci.invalid
+            smtp_admin_email: ci@ci.invalid
+            smtp_host: smtp.ci.invalid
+            smtp_user: ci@ci.invalid
             smtp_password: ci-not-a-real-password
 
           secrets:
