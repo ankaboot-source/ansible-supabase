@@ -13,6 +13,35 @@ permissions:
 
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
+  # Does this PR touch anything that can change a deployment? A docs-only or
+  # workflow-only change has no business spending fifteen minutes bringing up
+  # the Supabase stack.
+  # ───────────────────────────────────────────────────────────────────────────
+  changes:
+    name: Detect deployment-affecting changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      deploy: ${{ steps.filter.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        run: |
+          git fetch --quiet origin "${{ github.base_ref }}"
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          echo "Changed files:"; echo "$changed"
+          if echo "$changed" | grep -qE '^(roles/|tests/|scripts/|env/|\.github/workflows/|setup\.sh|install\.sh|generate-keys\.sh|migrate\.sh|requirements\.yml|config\.example\.yml|[^/]+\.yml)'; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "→ integration will run"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "→ integration skipped (no deployment-affecting files)"
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
   # Fast gate. Runs on every PR, finishes in about a minute.
   # ───────────────────────────────────────────────────────────────────────────
   lint:
@@ -104,12 +133,19 @@ jobs:
   # throwaway VM with sudo and Docker, which is exactly the target this
   # playbook expects — no external server needed.
   #
+  # This is the *smoke* deployment: one distro, the components that matter
+  # most, enough to catch a broken role before it reaches main. The full
+  # sweep — every component, LUKS, restore drills, both Ubuntu versions —
+  # runs at release time in release.yml.
+  #
   # Not covered here: Caddy, TLS and SSO. Let's Encrypt needs public DNS and
   # port 80 reachable, which a runner does not have. UFW is left off so the
   # job cannot firewall itself mid-run.
   # ───────────────────────────────────────────────────────────────────────────
   integration:
     name: Integration (deploy, idempotence, backup/restore)
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
