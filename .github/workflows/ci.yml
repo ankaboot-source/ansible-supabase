@@ -311,6 +311,36 @@ jobs:
             "select archived_count, failed_count, last_failed_wal, last_failed_time from pg_stat_archiver;" 2>&1 || true
           echo "::endgroup::"
 
+          # stanza-create and backup run through `docker exec`, i.e. as root,
+          # and they succeed. archive-push is spawned by the postmaster as the
+          # postgres user, and it fails every time. The difference is the user,
+          # not the binary — so look at what differs for that user.
+          echo "::group::who postgres is, and what it can reach"
+          sudo docker exec supabase-db id postgres 2>&1 || true
+          sudo docker exec supabase-db ls -ldn \
+            /var/lib/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest \
+            /etc/pgbackrest/pgbackrest.conf /usr/bin/pgbackrest 2>&1 || true
+          echo "::endgroup::"
+
+          # pg_stat_archiver keeps no error text, so reproduce the failure
+          # directly and let pgbackrest say why.
+          echo "::group::archive-push reproduced as postgres"
+          wal=$(sudo docker exec supabase-db sh -c \
+            'ls /var/lib/postgresql/data/pg_wal/ 2>/dev/null | grep -E "^[0-9A-F]{24}$" | head -1' 2>/dev/null || true)
+          if [ -n "$wal" ]; then
+            echo "segment: $wal"
+            sudo timeout 60 docker exec -u postgres supabase-db \
+              pgbackrest --stanza=main --log-level-console=detail \
+              archive-push "/var/lib/postgresql/data/pg_wal/${wal}" 2>&1 || true
+          else
+            echo "(no WAL segment found to retry)"
+          fi
+          echo "::endgroup::"
+
+          echo "::group::what PostgreSQL logged about archiving"
+          sudo docker logs supabase-db 2>&1 | grep -iE 'archive|pgbackrest' | tail -40 || true
+          echo "::endgroup::"
+
       - name: Container logs on failure
         if: failure()
         run: |

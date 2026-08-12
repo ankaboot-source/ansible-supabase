@@ -246,13 +246,31 @@
       CONF="$BACKUP_DIR/pgbackrest.conf"
       [ -f "$CONF" ] || install -m 0640 /dev/null "$CONF"
 
-      # Fix ownership for directories that postgres (UID 100) writes to
+      # Ownership for the directories pgbackrest writes to: lock, log, spool.
+      #
+      # These matter only for archive-push, which the postmaster spawns as the
+      # postgres user — stanza-create and backup are run through docker exec as
+      # root and can write regardless, which is why they can succeed while
+      # every archive-push fails. The uid was hardcoded to 100:101, a guess
+      # about the image's internals that goes wrong silently the moment the
+      # image changes it. Ask the image instead.
+      DB_IMAGE="{{ sb_db_version }}"
+      pg_uid="$(docker run --rm --entrypoint id "$DB_IMAGE" -u postgres 2>/dev/null || true)"
+      pg_gid="$(docker run --rm --entrypoint id "$DB_IMAGE" -g postgres 2>/dev/null || true)"
+      case "$pg_uid:$pg_gid" in
+        [0-9]*:[0-9]*) ;;
+        *)
+          echo "WARNING: could not read postgres uid/gid from $DB_IMAGE; falling back to 100:101" >&2
+          pg_uid=100; pg_gid=101 ;;
+      esac
+      echo "pgbackrest work dirs will be owned by ${pg_uid}:${pg_gid} (postgres in $DB_IMAGE)"
+
       mkdir -p "$BACKUP_DIR/volumes/pgbackrest/lock"
       mkdir -p "$BACKUP_DIR/volumes/pgbackrest-log"
       mkdir -p "$BACKUP_DIR/volumes/pgbackrest-spool/archive"
-      chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest"
-      chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest-log"
-      chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest-spool"
+      chown -R "$pg_uid:$pg_gid" "$BACKUP_DIR/volumes/pgbackrest"
+      chown -R "$pg_uid:$pg_gid" "$BACKUP_DIR/volumes/pgbackrest-log"
+      chown -R "$pg_uid:$pg_gid" "$BACKUP_DIR/volumes/pgbackrest-spool"
   when: backup_enabled | default(false) | bool
 
 - name: Run backup path preparation
