@@ -407,7 +407,7 @@ jobs:
           # useful line was unfindable — three failures were diagnosed against
           # a log whose own diagnostics had scrolled off the top.
           suspects="$(sudo docker ps -a --format '{{.Names}}\t{{.Status}}' \
-            | grep -Ei 'unhealthy|restarting|exited|starting|created' | cut -f1 || true)"
+            | grep -Ei 'unhealthy|restarting|starting|created|exited \([1-9]' | cut -f1 || true)"
           if [ -z "$suspects" ]; then
             echo "No container is unhealthy, restarting, exited or stuck created."
             suspects="$(sudo docker ps -a --format '{{.Names}}')"

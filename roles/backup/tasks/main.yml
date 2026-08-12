@@ -154,11 +154,23 @@
 # --- Wait for supabase-db to be READY (accepting connections, not in recovery) ---
 # pgbackrest commands (stanza-create, backup) need a live primary, not just a running container.
 - name: Wait for supabase-db to be ready
-  shell: >-
-    docker exec supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
-    timeout 5 pg_isready -U postgres -h 127.0.0.1 -p {{ postgres_port | default(5432) }} >/dev/null 2>&1
-    && ! docker exec supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
-    timeout 5 psql -U postgres -d postgres -tAc "select pg_is_in_recovery()" 2>/dev/null | grep -q t
+  # The recovery half used to read `! psql ... | grep -q t`, which treats a
+  # *failed* psql as proof the cluster is not in recovery: no output means grep
+  # finds no "t", and the negation turns that into success. So the check passed
+  # in exactly the case it exists to catch, and pgbackrest then refused the
+  # backup with "[056] ... are all available clusters in recovery?".
+  # Require an explicit "f" instead — anything else, including silence, retries.
+  # The user is the one pgbackrest itself connects as (pg1-user), so a failure
+  # here is the same failure the backup would hit.
+  shell: |
+    set -u
+    c=supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+    docker exec "$c" timeout 5 pg_isready \
+      -U supabase_admin -h 127.0.0.1 -p {{ postgres_port | default(5432) }} \
+      >/dev/null 2>&1 || exit 1
+    r=$(docker exec "$c" timeout 5 psql -U supabase_admin -d postgres \
+          -tAc "select pg_is_in_recovery()" 2>/dev/null | tr -d '[:space:]')
+    [ "$r" = "f" ]
   register: db_ready
   until: db_ready.rc == 0
   retries: 120
