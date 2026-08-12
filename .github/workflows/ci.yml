@@ -362,6 +362,20 @@ jobs:
              done' 2>&1 || echo "(no pgbackrest log files)"
           echo "::endgroup::"
 
+          # With archive-async, pgbackrest re-executes itself to spawn the
+          # worker. /usr/bin/pgbackrest is a wrapper script that execs the musl
+          # loader, so the "currently running executable" is the loader, not the
+          # wrapper — a re-exec of it would not be a working pgbackrest. If a
+          # `cmd` option exists it can be pointed back at the wrapper; this
+          # records whether it does, since pgbackrest.org is unreachable from
+          # the dev environment.
+          echo "::group::does this build have a cmd option, and what is exec'd"
+          sudo docker exec supabase-db sh -c \
+            'pgbackrest help archive-push 2>&1 | grep -iE "^ *(cmd|spool-path|archive-async)" || echo "(no cmd/spool-path/archive-async in help)"' 2>&1 || true
+          sudo docker exec supabase-db sh -c \
+            'ls -l /proc/self/exe; readlink -f /usr/bin/pgbackrest; cat /usr/bin/pgbackrest' 2>&1 || true
+          echo "::endgroup::"
+
           echo "::group::spool state (archive-async stages here)"
           sudo docker exec supabase-db sh -c \
             'ls -lRn /var/spool/pgbackrest 2>/dev/null | head -40' 2>&1 || true
