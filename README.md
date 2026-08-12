@@ -38,27 +38,13 @@ defaults and the wiring. What that does and does not buy you is written down in
 | Not seeing the outage | Basic reports | ❌ Nothing | ✅ Grafana + Prometheus + Loki |
 | Encryption at rest | ✅ Yes | ❌ No | ✅ LUKS on a dedicated volume |
 | Getting out of the Cloud | — | Manual, days of work | ✅ `migrate.sh`, one command |
-| Data residency / GDPR | US infrastructure | ✅ Your server | ✅ Your server, hardened |
+| Data residency / GDPR | [US infrastructure under Cloud Act even if hosted in the EU](https://www.looming.tech/post/cloud-act-aws-eu-region-gdpr) | ✅ Your server | ✅ Your server, hardened |
 
 Day 1 is the easy part. This project is built for day 2 and every day after: the
 deployment is idempotent Ansible, so you re-run it to change configuration, add a
 component, or rebuild the box — not a one-shot script you can never run twice.
 
 <!-- Marketing note: a ~40s asciinema recording of `sudo bash setup.sh` belongs here. -->
-
-### Server support matrix
-
-All Tier 1 targets — full stack CI on every PR:
-
-| Target | Notes |
-|--------|-------|
-| Ubuntu 24.04, Ubuntu 22.04 | the default assumption in this README |
-| Debian 12 | |
-| Arch | rolling, tracks upstream Docker |
-
-Out of scope (stated here so nobody discovers it at run time): **RHEL family** (SELinux needs its own work) and **Manjaro as a server target** (it's a desktop distro — it appears in this repo only on the client side, in [docs/connect-your-agent.md](docs/connect-your-agent.md)).
-
-The role detects the distro family from `ID_LIKE` in `/etc/os-release` (never `ID` — Mint and Pop!\_OS report `ID_LIKE=ubuntu debian`, which buys most derivatives for free).
 
 ---
 
