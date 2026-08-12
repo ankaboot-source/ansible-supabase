@@ -273,6 +273,23 @@ The monitoring stack listens on `127.0.0.1:3002` (Grafana), `127.0.0.1:9090` (Pr
 
 ---
 
+## Dashboard Logging (Log Drain)
+
+The Studio dashboard's log pane is powered by **Logflare** (`analytics`) and **Vector** (the log pipeline). Since the upstream self-hosted release, these run from a separate compose override — `docker-compose-logs.yml` — layered on top of `docker-compose-supabase.yml`.
+
+- **Enabled by default** (`required.enable_logging: true`). Set it to `false` in `config.yml` and re-run `setup.sh` to disable — the override is then excluded from `up` and orphaned `analytics`/`vector` containers are torn down on the next start.
+- Vector reads the Docker socket (read-only) and routes container logs to Logflare. Neither container publishes a host port; Studio and Vector reach `analytics` over the internal Docker network.
+- Both containers have healthchecks and are wired through to the `start-supabase.sh` wait loop, so `docker compose ps` shows the full stack.
+
+```yaml
+required:
+  enable_logging: true   # set false to disable the Studio log drain
+```
+
+You can swap the default images via `sb_logflare_version` / `sb_vector_version` in `roles/supabase/defaults/main.yml`.
+
+---
+
 ## LUKS Disk Encryption
 
 Encrypts a separate data volume for Supabase Postgres data at rest with automatic unlock on boot.
@@ -649,6 +666,7 @@ All values go in `env/supabase.yml`.
 | `openai_api_key` | No | OpenAI API key |
 | `supabase_path` | No | Relative path for Supabase docker dir |
 | `kong_conf_path` | No | Relative path for Kong config |
+| `log_drain_enabled` | No | Whether the Studio log drain (Logflare + Vector) starts. Set by `setup.sh` from `required.enable_logging` (default: `true`) |
 | `mcp_allowed_ips` | No | IPs allowed to reach `/mcp` via Kong (default: `[172.28.0.1]` — the Docker bridge gateway, since Docker source-NATs host connections; set `[]` to disable; see [Secure MCP Remote Access](#secure-mcp-remote-access)) |
 
 ### CADDY

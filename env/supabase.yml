@@ -49,6 +49,11 @@ GRAFANA_SMTP_SENDER: user@example.com
 supabase_path: supabase/docker
 kong_conf_path: volumes/api
 
+# Supabase dashboard log drain (Logflare + Vector). Rendered by setup.sh from
+# required.enable_logging. When true, start-supabase.sh also boots
+# docker-compose-logs.yml; set to false to disable log drain in the dashboard.
+log_drain_enabled: true
+
 # MCP (Model Context Protocol) secure access.
 # The /mcp Kong route is restricted to these IPs only. Docker source-NATs
 # host-originated connections to the bridge gateway IP (172.28.0.1 - see the

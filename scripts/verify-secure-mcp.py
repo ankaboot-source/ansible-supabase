@@ -10,6 +10,8 @@ from jinja2 import Environment, FileSystemLoader
 
 ROLE_TEMPLATES = "roles/supabase/templates"
 KONG_TEMPLATE = "kong-supabase.yml.j2"
+LOGS_COMPOSE_TEMPLATE = "docker-compose-logs.yml.j2"
+VECTOR_TEMPLATE = "vector-logs.yml.j2"
 CADDY_TEMPLATES = "roles/caddy/templates"
 
 
@@ -21,6 +23,26 @@ def render_kong(trim_blocks=False, lstrip_blocks=False, **vars):
         lstrip_blocks=lstrip_blocks,
     )
     return env.get_template(KONG_TEMPLATE).render(**vars)
+
+
+def render_logs(trim_blocks=False, lstrip_blocks=False, **vars):
+    env = Environment(
+        loader=FileSystemLoader(ROLE_TEMPLATES),
+        keep_trailing_newline=True,
+        trim_blocks=trim_blocks,
+        lstrip_blocks=lstrip_blocks,
+    )
+    return env.get_template(LOGS_COMPOSE_TEMPLATE).render(**vars)
+
+
+def render_vector(trim_blocks=False, lstrip_blocks=False, **vars):
+    env = Environment(
+        loader=FileSystemLoader(ROLE_TEMPLATES),
+        keep_trailing_newline=True,
+        trim_blocks=trim_blocks,
+        lstrip_blocks=lstrip_blocks,
+    )
+    return env.get_template(VECTOR_TEMPLATE).render(**vars)
 
 
 def find_service(doc, name):
@@ -55,6 +77,8 @@ def main():
         sb_functions_version="supabase/edge-runtime:latest",
         sb_db_version="supabase/postgres:latest",
         sb_supavisor_version="supabase/supavisor:latest",
+        sb_logflare_version="supabase/logflare:latest",
+        sb_vector_version="timberio/vector:latest",
         caddy_cert_base_path="/tmp",
         postgres_cert_path="/tmp",
         mcp_allowed_ips=["172.28.0.1"],
@@ -165,6 +189,46 @@ def main():
                 if "/mcp" in path:
                     mcp_in_caddy = True
     assert_true(not mcp_in_caddy, "env/supabase.yml Caddy projects do not expose /mcp")
+
+    # Log drain (docker-compose-logs.yml.j2) — the override must stay valid YAML
+    # under every trim_blocks/lstrip_blocks combination (same class of bug as the
+    # Kong {% for %} loop that mangled allow/deny), define the analytics/vector
+    # services with the deploy_env-suffixed container names, and flip Studio's
+    # ENABLED_FEATURES_LOGS_ALL to true.
+    for trim, lstrip in [(False, False), (True, False), (False, True), (True, True)]:
+        rendered = render_logs(trim_blocks=trim, lstrip_blocks=lstrip, **defaults)
+        doc = yaml.safe_load(rendered)
+        assert_true(
+            isinstance(doc, dict) and "services" in doc,
+            f"docker-compose-logs.yml is a YAML mapping with services (trim_blocks={trim}, lstrip_blocks={lstrip})",
+        )
+    logs_doc = yaml.safe_load(render_logs(**defaults))
+    logs_services = logs_doc.get("services", {})
+    assert_true("analytics" in logs_services, "logs override defines analytics service")
+    assert_true("vector" in logs_services, "logs override defines vector service")
+    assert_true(
+        logs_services["analytics"].get("container_name") == "supabase-analytics-prod",
+        "analytics container_name carries the deploy_env suffix",
+    )
+    assert_true(
+        logs_services["vector"].get("container_name") == "supabase-vector-prod",
+        "vector container_name carries the deploy_env suffix",
+    )
+    studio_env = logs_services.get("studio", {}).get("environment", {})
+    assert_true(
+        studio_env.get("ENABLED_FEATURES_LOGS_ALL") == "true",
+        "studio override enables ENABLED_FEATURES_LOGS_ALL",
+    )
+
+    # Vector pipeline (vector-logs.yml.j2) — must render to valid YAML with the
+    # router appnames matching the deploy_env-suffixed container names (except
+    # realtime-dev.supabase-realtime, which never gets a suffix).
+    vector_doc = yaml.safe_load(render_vector(**defaults))
+    transforms = vector_doc.get("transforms", {})
+    router = transforms.get("router", {}).get("route", {})
+    assert_true(router.get("kong") == '.appname == "supabase-kong-prod" || .appname == "supabase-envoy"', "router kong route uses suffixed container name")
+    assert_true(router.get("db") == '.appname == "supabase-db-prod"', "router db route uses suffixed container name")
+    assert_true(router.get("realtime") == '.appname == "realtime-dev.supabase-realtime"', "router realtime route is not suffixed")
 
     print("\nAll Kong template tests passed.")
 
