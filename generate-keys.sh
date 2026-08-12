@@ -1,8 +1,36 @@
 #!/bin/sh
 # Generate secrets and write them directly into env/supabase.yml
-# Usage:  cd ansible-supabase  &&  sh generate-keys.sh
+# Usage:
+#   sh generate-keys.sh           # generate (refuses if env is locked)
+#   sh generate-keys.sh --force   # regenerate even if env is locked
+#
+# Locking: if env/.setup.lock exists, this script refuses to run unless
+# --force is passed — regenerating secrets breaks running Supabase services
+# that were configured with the old keys (issue #127).
 
 set -e
+
+FORCE=0
+for arg in "$@"; do
+  case "$arg" in
+    --force) FORCE=1 ;;
+    -h|--help)
+      echo "Usage: sh generate-keys.sh [--force]"
+      echo "  --force   Regenerate secrets even if env/.setup.lock exists"
+      exit 0
+      ;;
+    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+
+LOCK_FILE="env/.setup.lock"
+if [ -f "$LOCK_FILE" ] && [ "$FORCE" -eq 0 ]; then
+  echo "error: env is locked ($LOCK_FILE exists)." >&2
+  echo "       Regenerating secrets would break running Supabase services." >&2
+  echo "       Re-run with --force to override:" >&2
+  echo "         sh generate-keys.sh --force" >&2
+  exit 1
+fi
 
 gen_hex()    { openssl rand -hex "$1"; }
 gen_b64()    { openssl rand -base64 "$1"; }
