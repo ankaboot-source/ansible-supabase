@@ -339,12 +339,45 @@ jobs:
             # runs archive_command as — rather than as a name that may not exist.
             pg_uid=$(sudo docker exec supabase-db stat -c '%u' /var/lib/postgresql/data 2>/dev/null || echo 0)
             echo "replaying as uid ${pg_uid}"
-            sudo timeout 60 docker exec -u "$pg_uid" supabase-db \
+            # Short on purpose: it is known to hang, and the log files dumped
+            # below say more than another minute of silence would.
+            sudo timeout 25 docker exec -u "$pg_uid" supabase-db \
               pgbackrest --stanza=main --log-level-console=detail \
               archive-push "/var/lib/postgresql/data/pg_wal/${wal}" 2>&1 || true
           else
             echo "(no WAL segment found to retry)"
           fi
+          echo "::endgroup::"
+
+          # pgbackrest logs to files under --log-path, not to stdout, so the
+          # grep below finds nothing on its own. With --archive-async the work
+          # happens in a spawned process whose only trace is its own log file —
+          # which is exactly what is missing when archive-push neither fails nor
+          # returns.
+          echo "::group::pgbackrest's own logs"
+          sudo docker exec supabase-db sh -c \
+            'for f in /var/log/pgbackrest/*.log; do
+               [ -f "$f" ] || continue
+               echo "──────── $f"; tail -60 "$f"
+             done' 2>&1 || echo "(no pgbackrest log files)"
+          echo "::endgroup::"
+
+          echo "::group::spool state (archive-async stages here)"
+          sudo docker exec supabase-db sh -c \
+            'ls -lRn /var/spool/pgbackrest 2>/dev/null | head -40' 2>&1 || true
+          echo "::endgroup::"
+
+          # Separates "pgbackrest is stuck" from "the repo is unreachable": a
+          # TCP connect to an address with no route hangs rather than refusing,
+          # which looks identical from the outside.
+          echo "::group::can the db container reach MinIO?"
+          sudo timeout 20 docker exec supabase-db bash -c \
+            'if timeout 5 bash -c "exec 3<>/dev/tcp/minio/9000" 2>/dev/null; then
+               echo "TCP connect to minio:9000 OK"
+             else
+               echo "TCP connect to minio:9000 FAILED or timed out"
+             fi
+             getent hosts minio || echo "(minio does not resolve)"' 2>&1 || true
           echo "::endgroup::"
 
           echo "::group::what PostgreSQL logged about archiving"
