@@ -95,18 +95,18 @@ def _db_container(manifest: Dict[str, Any]) -> str:
     return str(manifest.get("containers", {}).get("db", "supabase-db"))
 
 
-def _psql(db: str, sql: str, flags: str = "-c") -> Tuple[int, str, str]:
+def _psql(db: str, sql: str, flags: Tuple[str, ...] = ("-c",)) -> Tuple[int, str, str]:
     return _run([
         "docker", "exec", db, "psql",
-        "-U", "postgres", "-d", "postgres", flags, sql,
+        "-U", "postgres", "-d", "postgres", *flags, sql,
     ])
 
 
-def tool_list_tables(manifest: Dict[str, Any]) -> Dict[str, Any]:
+def tool_list_tables(_args: Dict[str, Any], manifest: Dict[str, Any]) -> Dict[str, Any]:
     sql = "SELECT schemaname || '.' || tablename FROM pg_tables " \
           "WHERE schemaname NOT IN ('pg_catalog','information_schema') " \
           "ORDER BY 1;"
-    rc, out, err = _psql(_db_container(manifest), sql, flags="-t -A -F $'\\t'")
+    rc, out, err = _psql(_db_container(manifest), sql, flags=("-t", "-A", "-c"))
     if rc != 0:
         return _tool_error(f"psql failed (rc={rc}): {err.strip()}")
     return _tool_text(out)
@@ -142,7 +142,7 @@ def tool_query(args: Dict[str, Any], manifest: Dict[str, Any]) -> Dict[str, Any]
         if re.search(rf"\b{verb}\b", upper):
             return _tool_error(f"forbidden verb in query: {verb}")
 
-    rc, out, err = _psql(_db_container(manifest), sql, flags="-t -A -F $'\\t'")
+    rc, out, err = _psql(_db_container(manifest), sql, flags=("-t", "-A", "-c"))
     if rc != 0:
         return _tool_error(f"psql failed (rc={rc}): {err.strip()}")
     return _tool_text(out)
