@@ -143,9 +143,18 @@
 # --- Wait for MinIO bucket creation (minio-init exits 0 when its 'mc mb' finished) ---
 # stanza-create needs the bucket to exist in the repo; otherwise it fails with 039.
 - name: Wait for MinIO bucket creation
-  command: docker inspect --format='{% raw %}{{.State.ExitCode}}{% endraw %}' supabase-minio-init{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+  # Status as well as exit code. A container that has been created but never
+  # started also reports ExitCode 0, so waiting on the code alone returned
+  # "ready" immediately — before minio-init had run, and therefore before the
+  # bucket existed. stanza-create then listed a bucket MinIO did not have and
+  # got a 404, which surfaced much later as "[103] archive.info missing".
+  # Whether it worked came down to which finished first.
+  command: >-
+    docker inspect
+    --format='{% raw %}{{.State.Status}} {{.State.ExitCode}}{% endraw %}'
+    supabase-minio-init{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
   register: minio_bucket_ready
-  until: (minio_bucket_ready.rc == 0) and (minio_bucket_ready.stdout == '0')
+  until: (minio_bucket_ready.rc == 0) and (minio_bucket_ready.stdout | trim == 'exited 0')
   retries: 40
   delay: 5
   changed_when: false
