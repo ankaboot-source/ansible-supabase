@@ -252,6 +252,30 @@
      and stanza_create_result.rc | default(0) != 0
      and 'already exists' not in (stanza_create_result.stdout | default('')))
 
+# --- Wait until WAL archiving actually reaches the repository ---
+# The db container starts with archive_mode=on and an archive_command pointing
+# at a stanza that does not exist yet, so every push until stanza-create fails:
+#
+#   ERROR: [103]: unable to find a valid repository
+#          unable to load info file '.../archive/main/archive.info'
+#          HINT: has a stanza-create been performed?
+#
+# PostgreSQL retries with a growing back-off, so after the stanza appears the
+# pending segment can sit unarchived for up to a minute — while the backup
+# below waits only 60s for it and then aborts with
+# "[082]: WAL segment ... was not archived before the 60000ms timeout".
+# `pgbackrest check` is built for this: it forces a WAL switch and confirms the
+# segment lands in the repository, so it both verifies and unblocks.
+- name: Wait for WAL archiving to reach the repository
+  command: >
+    docker exec supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+    pgbackrest --stanza={{ backup_stanza_name }} --log-level-console=info check
+  register: archive_check
+  until: archive_check.rc == 0
+  retries: 12
+  delay: 10
+  changed_when: false
+
 # --- Initial full backup on enable ---
 - name: Initial full backup on enable
   command: >
