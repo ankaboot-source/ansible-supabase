@@ -1,0 +1,9 @@
+---
+# Constants for the agent_access role. These are NOT user-configurable.
+# The path layout is part of the deployment contract — other roles (manifest)
+# and the supabase-agent / supabase-selfhosted scripts assume these exact paths.
+agent_key_path: /etc/supabase/agent_ed25519
+agent_key_pub_path: /etc/supabase/agent_ed25519.pub
+agent_binary: /usr/local/bin/supabase-agent
+info_binary: /usr/local/bin/supabase-selfhosted
+agent_key_comment: supabase-agent

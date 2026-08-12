@@ -1,0 +1,161 @@
+---
+# SSH-stdio MCP agent for AI agents and the companion info CLI.
+# The keypair is the deployment's identity: agents `ssh <alias> supabase-agent`
+# to reach the MCP server. The pubkey is the only thing that ever leaves the
+# server; the private key is printed ONCE in the end-of-run recap.
+#
+# Manifest path /etc/supabase/instance.json is a hardwired contract — do NOT
+# make it configurable. See roles/manifest/tasks/main.yml for the writer.
+
+- name: Ensure /etc/supabase directory exists
+  ansible.builtin.file:
+    path: /etc/supabase
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Use community.crypto when present (gives us a `register`able result with
+# .changed) and fall back to a raw ssh-keygen otherwise. The fallback exists
+# so the role still works on minimal installs that didn't pull in the
+# community collection.
+- name: Generate ed25519 agent keypair (community.crypto)
+  community.crypto.openssh_keypair:
+    path: "{{ agent_key_path }}"
+    type: ed25519
+    comment: "{{ agent_key_comment }}"
+    mode: "0600"
+  register: agent_keypair_result
+  become: true
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python | default(ansible_python_interpreter | default('python3')) }}"
+
+- name: Generate ed25519 agent keypair (fallback)
+  ansible.builtin.command:
+    cmd: >-
+      ssh-keygen -t ed25519 -N "" -f {{ agent_key_path }} -C {{ agent_key_comment }}
+    creates: "{{ agent_key_path }}"
+  register: agent_keypair_fallback_result
+  become: true
+  when: agent_keypair_result is failed
+
+- name: Set permissions on private key
+  ansible.builtin.file:
+    path: "{{ agent_key_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+
+- name: Set permissions on public key
+  ansible.builtin.file:
+    path: "{{ agent_key_pub_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+
+# Try to register the freshly-generated key so we can show it in the recap.
+# On the fallback path, we don't have a structured `key` value, so we just
+# slurp the file — same end result, less metadata.
+- name: Slurp private key for recap
+  ansible.builtin.slurp:
+    src: "{{ agent_key_path }}"
+  register: agent_private_key_b64
+  become: true
+  no_log: false
+
+- name: Slurp public key for authorized_keys
+  ansible.builtin.slurp:
+    src: "{{ agent_key_pub_path }}"
+  register: agent_public_key_b64
+  become: true
+
+- name: Deploy supabase-agent binary
+  ansible.builtin.copy:
+    src: supabase-agent
+    dest: "{{ agent_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: Deploy supabase-selfhosted binary
+  ansible.builtin.copy:
+    src: supabase-selfhosted
+    dest: "{{ info_binary }}"
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: Ensure deploy_user .ssh directory exists
+  ansible.builtin.file:
+    path: "~{{ deploy_user }}/.ssh"
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0700"
+  become: true
+
+- name: Ensure deploy_user authorized_keys exists
+  ansible.builtin.file:
+    path: "~{{ deploy_user }}/.ssh/authorized_keys"
+    state: touch
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0600"
+  become: true
+
+# Install (or refresh) the public key with the command-restriction prefix.
+# Idempotency strategy: match any line containing the comment "supabase-agent"
+# and replace it with the new restricted line. This handles the three cases
+# we care about:
+#   1. fresh install — lineinfile appends a new line
+#   2. key regenerated — old line is replaced in place
+#   3. existing matching line — no change
+- name: Install restricted pubkey into authorized_keys
+  ansible.builtin.lineinfile:
+    path: "~{{ deploy_user }}/.ssh/authorized_keys"
+    # Match any line containing the key comment so a regenerated key replaces
+    # the old restricted line in place (idempotent across re-runs).
+    regexp: '.*{{ agent_key_comment }}$'
+    line: 'command="{{ agent_binary }}",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty {{ (agent_public_key_b64.content | b64decode | trim) }}'
+    state: present
+    create: false
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0600"
+  become: true
+
+# End-of-run recap: only when the key is fresh. Showing the private key is
+# inherently a one-shot thing — on subsequent runs the recap is silent.
+- name: End-of-run recap (fresh key)
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - " supabase-agent key freshly generated — copy this NOW"
+      - "================================================================"
+      - "Private key (~/.ssh/<alias> on the client side):"
+      - ""
+      - "{{ (agent_private_key_b64.content | b64decode) }}"
+      - ""
+      - "Add this block to your local ~/.ssh/config:"
+      - ""
+      - "Host supabase-agent"
+      - "  HostName <this-server>"
+      - "  User {{ deploy_user }}"
+      - "  IdentityFile ~/.ssh/<alias>"
+      - "  IdentitiesOnly yes"
+      - "  StrictHostKeyChecking accept-new"
+      - ""
+      - "MCP client config (Claude / Cursor / etc.):"
+      - ""
+      - "  {"
+      - "    \"command\": \"ssh\","
+      - "    \"args\": [\"supabase-agent\", \"supabase-agent\"]"
+      - "  }"
+      - "================================================================"
+  when:
+    - (agent_keypair_result.changed | default(false))
+      or (agent_keypair_fallback_result is defined and agent_keypair_fallback_result.changed | default(false))
