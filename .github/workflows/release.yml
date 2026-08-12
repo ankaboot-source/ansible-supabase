@@ -10,9 +10,14 @@
 #                that before a user does.
 #   dispatch   — run it by hand when you want to.
 #
-# Runner coverage is Ubuntu-only: GitHub-hosted runners do not offer Debian or
-# Arch images. The README claims those as supported targets, and nothing here
-# proves it — covering them needs a self-hosted runner or a VM provider.
+# Coverage is one Ubuntu LTS, deliberately. The docker role branches on distro
+# *family* (ID_LIKE), not on individual distros, so Ubuntu exercises the same
+# apt path every Debian-based target takes — and Ubuntu LTS is what the VPS
+# hosts this is aimed at hand you by default.
+#
+# What that leaves uncovered is the Arch pacman branch. Covering it needs a
+# self-hosted runner or a VM provider; the README says so rather than implying
+# CI proves it.
 
 name: Release
 
@@ -36,13 +41,9 @@ jobs:
   # supported Ubuntu versions.
   # ───────────────────────────────────────────────────────────────────────────
   full-stack:
-    name: Full stack (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Full stack (Ubuntu LTS)
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v4
 
@@ -144,7 +145,6 @@ jobs:
           echo "Supabase upstream under test: ${ref}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the recording
-        if: matrix.os == 'ubuntu-24.04'
         uses: actions/upload-artifact@v4
         with:
           name: install-cast

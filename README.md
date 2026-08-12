@@ -3,7 +3,7 @@
 **The AI-ready Supabase distribution for production self-hosting.** Point your coding
 agent at your own server and build — with the developer experience you get from
 Supabase Cloud, on a stack that ships with SSO, point-in-time recovery, monitoring
-and disk encryption. Runs on Debian, Ubuntu and Arch.
+and disk encryption. Runs on any Debian-based distribution, including Ubuntu — plus Arch.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -67,7 +67,11 @@ component, or rebuild the box — not a one-shot script you can never run twice.
 
 ### Prerequisites
 
-- A **Debian 12, Ubuntu 22.04/24.04, or Arch Linux server** with root or sudo access
+- A **Debian-based server** — Debian, Ubuntu, or a derivative — **or Arch**, with root
+  or sudo access. The distro family is detected from `ID_LIKE` in `/etc/os-release`
+  rather than from a hardcoded list, so derivatives like Mint and Pop!\_OS come along
+  for free. CI deploys the full stack on Ubuntu LTS on every release; the Arch package
+  path is supported but not covered by CI.
 - A **domain** with three DNS A records pointing to your server:
   - `sb.example.com` — Supabase dashboard + API
   - `auth.example.com` — OAuth2 authentication endpoint
