@@ -1,0 +1,219 @@
+---
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Fast gate. Runs on every PR, finishes in about a minute.
+  # ───────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install linters
+        run: pip install --quiet ansible ansible-lint yamllint shellcheck-py
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: yamllint
+        run: yamllint .
+
+      - name: ansible-lint
+        run: ansible-lint
+
+      - name: Playbook syntax check
+        run: ansible-playbook playbook-supabase.yml -e @env/supabase.yml --syntax-check
+
+      # Gate on errors. Warnings are reported but do not block — see the
+      # advisory step below.
+      - name: shellcheck
+        run: shellcheck -S error setup.sh install.sh migrate.sh generate-keys.sh tests/*.sh
+
+      - name: shellcheck (advisory warnings)
+        continue-on-error: true
+        run: |
+          shellcheck -S warning -f gcc setup.sh install.sh migrate.sh \
+            generate-keys.sh tests/*.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Hermetic shell-level tests. No Docker, no Ansible — the deploy step is
+  # stubbed inside the test harness.
+  #
+  # Two of the three suites are red on main today, so they run advisory rather
+  # than blocking. Their baselines are asserted below: the counts may improve,
+  # never regress. Tighten each one to a plain `bash tests/...` gate as it
+  # reaches zero failures.
+  #
+  #   test-backup.sh   1 failure  — TC-BACKUP-039 (db container pgbackrest mounts)
+  #   test-migrate.sh  14 failures — assertion text drifted from migrate.sh's
+  #                                  actual messages. Exit codes are correct
+  #                                  (the script does refuse), so the suite can
+  #                                  no longer prove *why* it refused.
+  # ───────────────────────────────────────────────────────────────────────────
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup.sh
+        run: bash tests/test-setup.sh
+
+      - name: backup role (baseline 1 failure)
+        run: |
+          bash tests/test-backup.sh | tee /tmp/backup.log || true
+          failures=$(grep -oP 'FAIL:\s*\K[0-9]+' /tmp/backup.log | tail -1)
+          echo "test-backup.sh failures: ${failures} (baseline 1)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "${failures:-99}" -gt 1 ]; then
+            echo "::error::Regression — was 1 failure, now ${failures}."
+            exit 1
+          fi
+
+      - name: migrate.sh (baseline 14 failures)
+        run: |
+          bash tests/test-migrate.sh | tee /tmp/migrate.log || true
+          failures=$(grep -oP 'Results: [0-9]+ passed, \K[0-9]+' /tmp/migrate.log | tail -1)
+          echo "test-migrate.sh failures: ${failures} (baseline 14)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "${failures:-99}" -gt 14 ]; then
+            echo "::error::Regression — was 14 failures, now ${failures}."
+            exit 1
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Real deployment on the runner itself. The GitHub-hosted runner is a
+  # throwaway VM with sudo and Docker, which is exactly the target this
+  # playbook expects — no external server needed.
+  #
+  # Not covered here: Caddy, TLS and SSO. Let's Encrypt needs public DNS and
+  # port 80 reachable, which a runner does not have. UFW is left off so the
+  # job cannot firewall itself mid-run.
+  # ───────────────────────────────────────────────────────────────────────────
+  integration:
+    name: Integration (deploy, idempotence, backup/restore)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Supabase images do not fit in the runner's default free space.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Report available disk
+        run: df -h /
+
+      - name: Write config.yml
+        run: |
+          cat > config.yml <<'YAML'
+          required:
+            deploy_user: runner
+            site_url: https://app.example.com
+            api_external_url: https://sb.example.com
+            supabase_domain: sb.example.com
+            smtp_admin_email: ci@example.com
+            smtp_host: smtp.example.com
+            smtp_user: ci@example.com
+            smtp_password: ci-not-a-real-password
+
+          secrets:
+            generate: true
+
+          components:
+            caddy: false      # needs public DNS + port 80 for Let's Encrypt
+            monitor: false    # disk-hungry; enable once the runner has room
+            fail2ban: false
+            backup: true      # the point of this job
+            ufw: false        # would firewall the runner mid-job
+            luks: false       # needs a dedicated block device
+
+          advanced:
+            backup:
+              repo_type: minio
+          YAML
+
+      - name: Deploy
+        run: sudo bash setup.sh --yes
+
+      - name: Wait for containers to become healthy
+        run: |
+          for i in $(seq 1 60); do
+            unhealthy=$(sudo docker ps --format '{{.Names}}\t{{.Status}}' \
+              | grep -c 'unhealthy\|starting' || true)
+            if [ "$unhealthy" -eq 0 ]; then
+              echo "All containers settled after ${i}0s."
+              sudo docker ps --format '{{.Names}}\t{{.Status}}'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Containers did not become healthy within 10 minutes."
+          sudo docker ps --format '{{.Names}}\t{{.Status}}'
+          exit 1
+
+      - name: Smoke test the API gateway
+        run: |
+          set -x
+          anon_key=$(sudo grep -oP '^sb_anon_key:\s*\K\S+' env/supabase.yml)
+          curl -fsS -H "apikey: ${anon_key}" http://localhost:8000/rest/v1/ > /dev/null
+          echo "Kong routed a REST request successfully."
+
+      # Advisory until the no-changed-when backlog in .ansible-lint is worked
+      # off: 18 tasks shell out and report "changed" unconditionally, so a
+      # re-run is never a clean no-op yet. The number is printed so the
+      # backlog is visible and shrinking.
+      - name: Idempotence (advisory)
+        continue-on-error: true
+        run: |
+          sudo ansible-playbook playbook-supabase.yml -e @env/supabase.yml \
+            | tee /tmp/rerun.log
+          changed=$(grep -oP 'changed=\K[0-9]+' /tmp/rerun.log | head -1)
+          echo "Tasks reporting changed on re-run: ${changed}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "${changed}" = "0" ]
+
+      - name: On-demand backup
+        run: sudo ansible-playbook -i localhost, -c local backup.yml -e @env/supabase.yml
+
+      - name: Non-destructive restore verification
+        run: |
+          sudo ansible-playbook -i localhost, -c local restore-verify.yml \
+            -e @env/supabase.yml
+
+      - name: Container logs on failure
+        if: failure()
+        run: |
+          sudo docker ps -a --format '{{.Names}}\t{{.Status}}'
+          for c in $(sudo docker ps -aq); do
+            echo "──────── $(sudo docker inspect --format '{{.Name}}' "$c")"
+            sudo docker logs --tail 80 "$c" 2>&1 || true
+          done

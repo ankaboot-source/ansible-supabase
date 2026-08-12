@@ -10,9 +10,9 @@
   become: true
   template:
     src: reset_ufw.sh.j2
-    dest: {{ node_home }}/reset_ufw.sh
+    dest: "{{ node_home }}/reset_ufw.sh"
     mode: '0755'
 
 - name: Run UFW script
   become: true
-  command: {{ node_home }}/reset_ufw.sh
+  command: "{{ node_home }}/reset_ufw.sh"

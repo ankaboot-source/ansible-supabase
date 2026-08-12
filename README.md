@@ -1,12 +1,50 @@
-# Ansible Supabase
+# Supabase Self-Host Ops
 
-One-command deployment of a **self-hosted, production-ready Supabase stack** on Debian, Ubuntu, or Arch Linux. The playbook installs Docker, clones the latest Supabase release, generates all configuration files, and starts the full stack — secured by default with automatic TLS, SSO/OAuth2, basic auth, IP allow-listing, a firewall, and brute-force protection.
+**The AI-ready Supabase distribution for production self-hosting.** Point your coding
+agent at your own server and build — with the developer experience you get from
+Supabase Cloud, on a stack that ships with SSO, point-in-time recovery, monitoring
+and disk encryption. Runs on Debian, Ubuntu and Arch.
 
-This repository's purpose is to give you a **ready-to-use, full-featured Supabase with security, encryption, and SSO/auth baked in** — not a bare dashboard exposed to the internet.
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-> **Encryption at rest (LUKS) and automated backups + PITR (pgBackRest)** are included and ready to enable; they need a dedicated disk volume and (for off-box backups) S3 credentials respectively, so they are shown as optional hardening steps at the end of this guide.
+---
 
-For deep customization (custom OAuth providers, Grafana modes, retention tuning, version pinning) see [docs/advanced-docs.md](docs/advanced-docs.md).
+## Why this exists
+
+Building on Supabase Cloud works right up to the bill, the data-residency question,
+or the day the database has to live somewhere you control. Self-hosting answers all
+three — and throws away everything that made the workflow work in the first place.
+The official path, `docker compose up` on the sample stack, leaves you with a Studio
+dashboard open to the internet, no endpoint your agent can talk to, no way for a tool
+to discover what was even deployed, and nothing to restore from the day the database
+breaks. So you hand-feed your agent connection strings, or hand it a `service_role`
+key and hope.
+
+This distribution closes that gap. One command deploys the stack, applies hardened
+defaults, backs it up continuously, watches it — and exposes it to your coding agent
+through a read-only channel carried over SSH, with tools that are not given secret
+values to return.
+
+It does that by composing things other people built well — Supabase, Caddy,
+pgBackRest, Postgres, LUKS — rather than by inventing any of it. The work here is the
+defaults and the wiring. What that does and does not buy you is written down in
+[SECURITY.md](SECURITY.md), including the parts that are on you.
+
+| What you worry about | Supabase Cloud | `docker compose` self-host | This project |
+|---|---|---|---|
+| Building with an AI agent | ✅ Hosted MCP | ❌ Hand-fed credentials | ✅ Read-only MCP over SSH, no public port |
+| Losing the database | Paid PITR add-on | ❌ Nothing | ✅ pgBackRest: continuous WAL + PITR |
+| Dashboard exposed | ✅ Managed auth | ❌ Open to the internet | ✅ OIDC + basic auth + IP allow-list |
+| Not seeing the outage | Basic reports | ❌ Nothing | ✅ Grafana + Prometheus + Loki |
+| Encryption at rest | ✅ Yes | ❌ No | ✅ LUKS on a dedicated volume |
+| Getting out of the Cloud | — | Manual, days of work | ✅ `migrate.sh`, one command |
+| Data residency / GDPR | US infrastructure | ✅ Your server | ✅ Your server, hardened |
+
+Day 1 is the easy part. This project is built for day 2 and every day after: the
+deployment is idempotent Ansible, so you re-run it to change configuration, add a
+component, or rebuild the box — not a one-shot script you can never run twice.
+
+<!-- Marketing note: a ~40s asciinema recording of `sudo bash setup.sh` belongs here. -->
 
 ### Server support matrix
 
@@ -26,47 +64,48 @@ The role detects the distro family from `ID_LIKE` in `/etc/os-release` (never `I
 
 ## 📑 Table of Contents
 
-- [🚀 Quick Start (recommended)](#-quick-start-recommended)
-- [🔧 Advanced: manual `install.sh` flow](#-advanced-manual-installsh-flow)
-- [🔒 Optional Hardening](#-optional-hardening)
+- [🚀 Quick Start](#-quick-start)
+- [🎁 What You Get](#-what-you-get)
 - [📦 What Gets Deployed](#-what-gets-deployed)
-- [📚 Advanced Features](#-advanced-features)
 - [🤖 Connect Your AI Agent](#-connect-your-ai-agent)
-- [🔒 Secure MCP Remote Access](#-secure-mcp-remote-access)
+- [🔒 Optional Hardening](#-optional-hardening)
 - [🚚 Migration from Supabase Cloud](#-migration-from-supabase-cloud)
+- [🔒 Secure MCP Remote Access](#-secure-mcp-remote-access)
+- [🔧 Manual Installation](#-manual-installation)
+- [💬 Support](#-support)
 - [📄 License](#-license)
 
 ---
 
-## 🚀 Quick Start (recommended)
+## 🚀 Quick Start
 
-The deterministic installer (`setup.sh`) reads a single `config.yml` file, generates all cryptographic secrets, renders the Ansible variables, enables the components you want, and deploys. This is the easiest path for both humans and AI agents.
-
-### 1. 📋 Prerequisites
+### Prerequisites
 
 - A **Debian 12, Ubuntu 22.04/24.04, or Arch Linux server** with root or sudo access (see the [server support matrix](#server-support-matrix) above)
 - A **domain** with three DNS A records pointing to your server:
   - `sb.example.com` — Supabase dashboard + API
   - `auth.example.com` — OAuth2 authentication endpoint
-  - `monitor.example.com` — Grafana dashboard (monitoring is enabled by default)
-- Ports **80** and **443** reachable for automatic Let's Encrypt TLS and the Caddy reverse proxy
-- A registered **OAuth2 application** (GitHub, GitLab, Discord, or any OIDC provider) to protect the dashboard via SSO — see [SSO Provider Setup](#sso-provider-setup) below
+  - `monitor.example.com` — Grafana dashboard
+- Ports **80** and **443** reachable for automatic Let's Encrypt TLS
+- An **OAuth2 application** (GitHub, GitLab, Discord, or any OIDC provider) to protect
+  the dashboard — see [SSO Provider Setup](docs/advanced-docs.md#sso-provider-setup)
 
-### 2. 📥 Clone
-
-```bash
-git clone https://github.com/ankaboot-source/ansible-supabase.git
-cd ansible-supabase
-```
-
-### 3. ⚙️ Create `config.yml` and fill the REQUIRED section
+### Deploy
 
 ```bash
+git clone https://github.com/ankaboot-source/supabase-selfhost-ops.git
+cd supabase-selfhost-ops
 cp config.example.yml config.yml
-$EDITOR config.yml   # or: code config.yml
+$EDITOR config.yml          # fill the `required:` block — everything else has defaults
+sudo bash setup.sh
 ```
 
-`config.yml` has four clearly separated sections. **Only the `required` block must be filled in** — everything else has safe defaults:
+`setup.sh` validates your config, generates every cryptographic secret, renders the
+Ansible variables, enables the components you asked for, and deploys the stack.
+
+### Configuring `config.yml`
+
+Four clearly separated sections. **Only `required:` must be filled in.**
 
 ```yaml
 # ─── REQUIRED (you must fill these) ───────────────────────────
@@ -83,15 +122,13 @@ required:
 # ─── SECRETS (auto-generated by default) ─────────────────────
 secrets:
   generate: true          # set false to provide your own keys below
-  # postgres_db_pwd: ...
-  # sb_jwt_secret: ...
 
 # ─── COMPONENTS (all off by default — enable what you need) ──
 components:
   caddy: false            # reverse proxy + TLS + SSO
   monitor: false          # Grafana + Prometheus + Loki
-  fail2ban: false        # brute-force protection
-  backup: false           # Automated backups + PITR (pgBackRest)
+  fail2ban: false         # brute-force protection
+  backup: false           # automated backups + PITR (pgBackRest)
   ufw: false              # firewall
   luks: false             # at-rest disk encryption
 
@@ -99,24 +136,13 @@ components:
 advanced:
   caddy:
     sso_provider: Generic   # github | gitlab | discord | Generic
-    # ...
 ```
 
-### 4. ▶️ Deploy
+> **⚠️ With every component disabled, your Supabase dashboard is exposed with no
+> authentication.** For any production deployment, enable at least `caddy`, `ufw`,
+> `fail2ban` and `backup`.
 
-```bash
-sudo bash setup.sh
-```
-
-That's it. `setup.sh` will:
-
-1. Validate the REQUIRED fields are filled (fails fast with a clear list if not).
-2. Auto-generate all cryptographic secrets (JWT, anon/service keys, Postgres password, etc.) unless `secrets.generate: false`.
-3. Render `env/supabase.yml` from your config.
-4. Enable the selected components in `playbook-supabase.yml`.
-5. Run the Ansible deployment via `install.sh`.
-
-#### Useful flags
+### Flags
 
 | Flag | Description |
 |------|-------------|
@@ -129,248 +155,73 @@ That's it. `setup.sh` will:
 > **Locking:** after the first successful render, `setup.sh` writes `env/.setup.lock`. Subsequent runs **preserve the existing secrets** in `env/supabase.yml` — they are neither regenerated nor overwritten with placeholders — so already-running Supabase services keep working. Pass `--force` to regenerate secrets on purpose (e.g. after a key rotation). `--dry-run` never writes the lock.
 
 ```bash
-# Preview without changes
-bash setup.sh --dry-run
-
-# Fully non-interactive (AI/CI)
-sudo bash setup.sh --yes
+bash setup.sh --dry-run       # preview, no changes
+sudo bash setup.sh --yes      # fully non-interactive
 ```
 
-> **⚠️ Security Notice:** With all components disabled the Supabase dashboard is exposed without authentication. For production, enable `caddy` (SSO/basic auth), `ufw`, and `fail2ban` in `config.yml` — see [docs/advanced-docs.md](docs/advanced-docs.md).
+Full configuration reference: **[docs/advanced-docs.md](docs/advanced-docs.md)**
 
 ---
 
-## 🔧 Advanced: manual `install.sh` flow
+## 🎁 What You Get
 
-If you prefer full control over `env/supabase.yml` and `playbook-supabase.yml` directly (or are upgrading from a previous setup), the original manual flow still works:
+### Your coding agent can build on it
 
-### 1. Generate Supabase required keys
+Every deployment writes an **instance manifest** (`/etc/supabase/instance.json`): a
+machine-readable contract describing ports, container names, endpoints, and where each
+secret lives — never the secret values themselves, with leak assertions that fail the
+run if one slips through. That is how a tool discovers what was deployed without being
+told.
 
-```bash
-sh generate-keys.sh
-```
+Agents connect over **SSH stdio** to a restricted key that can run exactly one command:
+a read-only MCP server exposing `list_tables`, `describe_table`, SELECT-only `query`,
+container status, and the manifest. No public port, no `service_role` key handed over,
+and no tool whose output includes secret values. The `supabase-selfhosted info` CLI
+shows real values on a terminal and redacts them the moment its output is piped.
 
-This updates `env/supabase.yml` with all Supabase cryptographic secrets (JWT, anon key, service role key, Postgres password, and all tokens).
+Read-only is not the same as harmless — read access to a database is still access to
+the data in it. Give an agent this the way you would give it a read replica.
 
-### 2. Configure `env/supabase.yml`
+How to wire it up: [Connect Your AI Agent](#-connect-your-ai-agent) below. The whole
+stack is documented for agents in [`AGENTS.md`](AGENTS.md).
 
-Open `env/supabase.yml` and fill in every field tagged `#REQUIRED`. The file ships with **secure defaults** (basic auth + IP allow-list + SSO on the dashboard). Keep them — do not strip them down.
+### You don't lose your database
 
-```yaml
-# ── System User ──────────────────────────────────
-deploy_user: your-ssh-username
-docker_users:
-  - your-ssh-username
+pgBackRest runs inside the `supabase-db` container: continuous WAL archiving,
+scheduled full and differential backups, **point-in-time recovery to the second**,
+and repository integrity verification. Backups go to an external S3 bucket (forced
+encryption), a local MinIO repo, or a POSIX path.
 
-# ── Supabase Secrets (auto-generated in step 3) ──────
-postgres_db_pwd: <strong-password>
-sb_jwt_secret: <jwt-secret-from-generator>
-sb_anon_key: <anon-key-from-generator>
-sb_service_role_key: <service-role-key-from-generator>
-secret_key_base: ...
-vault_enc_key: ...
-pg_meta_crypto_key: ...
-logflare_public_access_token: ...
-logflare_private_access_token: ...
-s3_protocol_access_key_id: ...
-s3_protocol_access_key_secret: ...
-pooler_tenant_id: pooler
+Restoring is a documented runbook, not an improvisation — the
+[restore-during-an-incident procedure](docs/advanced-docs.md#restore-during-an-incident--5-min)
+takes under 5 minutes, and `restore-verify.yml` lets you prove a backup is
+restorable **without ever touching production**.
 
-# ── Public URLs ──────────────────────────────────
-site_url: https://app.example.com          # Your app's public URL
-api_external_url: https://sb.example.com   # Supabase API endpoint (used by Studio)
-additional_redirect_urls: https://app.example.com/auth/callback
-mailer_templates_base_url: https://app.example.com
+### Your dashboard is not on the internet
 
-# ── SMTP (for auth emails) ───────────────────────
-smtp_admin_email: user@example.com
-smtp_host: mail.example.com
-smtp_user: user@example.com
-smtp_password: <smtp-password>
-```
+Caddy terminates TLS with automatic Let's Encrypt certificates and puts the Studio
+dashboard behind OAuth2 SSO — GitHub, GitLab, Discord, or any OIDC provider such as
+Keycloak — plus basic auth and an IP allow-list. API routes bypass SSO and are
+handled by Kong. UFW closes every internal port, and fail2ban blocks brute-force
+attempts against PostgreSQL.
 
-#### SSO Provider Setup
+### You know when it breaks
 
-Pick **one** OAuth2 provider and fill in its block in `env/supabase.yml`. Set `SSO_PROVIDER` to `github`, `gitlab`, `discord`, or `generic` (any OIDC).
+Grafana, Prometheus, Loki, Node Exporter, cAdvisor and Postgres Exporter, deployed
+and wired together with dashboards included. Alerting over SMTP is one config block
+away.
 
-**GitHub** (redirect URI: `https://sb.example.com/oauth2/github/authorization-code-callback`):
+### You can leave Supabase Cloud
 
-```yaml
-SSO_PROVIDER: github
-github_oauth_client_id: <your-client-id>
-github_oauth_client_secret: <your-client-secret>
-github_allow_list: "github.com/user1 github.com/user2"
-```
+`migrate.sh` moves an existing Cloud project into your self-hosted stack in one
+command: schema, data, auth users with UUIDs preserved, and storage objects — always
+read-only against the source. See
+[Migration from Supabase Cloud](#-migration-from-supabase-cloud).
 
-**GitLab** (redirect URI: `https://sb.example.com/oauth2/gitlab/authorization-code-callback`):
+### Your data is encrypted at rest
 
-```yaml
-SSO_PROVIDER: gitlab
-gitlab_domain: gitlab.com
-gitlab_oauth_client_id: <your-client-id>
-gitlab_oauth_client_secret: <your-client-secret>
-gitlab_allow_list: "user1@example.com user2@example.com"
-```
-
-**Discord** (redirect URI: `https://sb.example.com/oauth2/discord/authorization-code-callback`):
-
-```yaml
-SSO_PROVIDER: discord
-discord_oauth_client_id: <your-client-id>
-discord_oauth_client_secret: <your-client-secret>
-admin_role_id: <your-admin-user-id>
-discord_guild_id: <your-discord-server-id>
-```
-
-**Generic OIDC** (any OpenID Connect provider, e.g. Keycloak):
-
-```yaml
-SSO_PROVIDER: generic
-oidc_realm: generic
-oidc_driver: generic
-oidc_client_id: <your-client-id>
-oidc_client_secret: <your-client-secret>
-base_auth_url: https://keycloak.example.com
-metadata_url: https://keycloak.example.com/.well-known/openid-configuration
-app_url: https://sb.example.com
-generic_allow_list: "user1@gmail.com user2@gmail.com"
-```
-
-**Common SSO variables** (required for any provider):
-
-```yaml
-base_auth_domain: auth.example.com    # OAuth2 auth endpoint subdomain
-root_domain: example.com              # root domain for SSO cookies
-jwt_shared_key: <openssl rand -base64 32>
-```
-
-#### 🛡️ Caddyfile Configuration (Reverse Proxy + SSO + Basic Auth)
-
-The `projects` block in `env/supabase.yml` is pre-configured to protect the dashboard with SSO, basic auth, and an IP allow-list. Keep this secure default:
-
-```yaml
-projects:
-  supabase:
-    log_file: supabase-access
-    domain: "sb.example.com"
-    allowed_ips:                       # IP allow-list — remove if you don't need it
-      - 123.123.123.123
-      - 111.111.111.111
-    oidc_enabled: true
-    upstreams:
-      # Dashboard — protected by SSO + basic auth
-      - targets: ["localhost:3001"]
-        paths: [""]
-        oidc: true
-        basicauth:
-          - path: /project/default
-            username: your_user
-            # Generate with: caddy hash-password
-            password: $2a$10$...
-      # API routes — Kong handles auth, no SSO
-      - targets: ["localhost:8000"]
-        paths:
-          - /rest/v1/*
-          - /auth/v1/*
-          - /realtime/v1/*
-          - /storage/v1/*
-          - /functions/v1/*
-        oidc: false
-
-  monitor:
-    log_file: monitor-access
-    domain: "monitor.example.com"
-    oidc_enabled: false
-    upstreams:
-      - targets: ["localhost:3002"]
-        paths: [""]
-        oidc: false
-```
-
-> To lock down Grafana, set `GRAFANA_AUTH_ANONYMOUS_ENABLED: false` and enable basic auth or GitHub OAuth for Grafana (see [docs/advanced-docs.md](docs/advanced-docs.md)).
-
-#### 🧱 Firewall & Brute-force Protection
-
-The default `firewall_allow` / `firewall_deny` and fail2ban blocks in `env/supabase.yml` are already sane (allow 80/443 + SSH, deny internal ports). Adjust the `allowed_ips` and `firewall_allow` entries to your needs.
-
-### 5. 🧩 Enable the Security Roles
-
-The security roles ship commented in `playbook-supabase.yml`. **Uncomment them** so the default deploy includes the full security stack:
-
-```yaml
----
-- hosts: localhost
-  become: true
-  roles:
-   - docker
-   - supabase
-
-   # ─── Security & monitoring (enabled by default) ───
-   - ufw                     # Firewall — allow/deny rules per port
-   - caddy                   # Reverse proxy + automatic TLS + SSO + basic auth
-   - fail2ban                # Brute-force protection for Postgres
-   - monitor                 # Grafana + Prometheus + Loki stack
-
-   # ─── Optional hardening (need external resources) ───
-   # - role: luks             # At-rest disk encryption (needs a dedicated volume)
-   #   when: supabase_encryption.enabled
-    # - backup                 # Automated backups + PITR (pgBackRest)
-```
-
-### 6. ▶️ Deploy
-
-Run the installer (installs Ansible + Git if needed, then executes the playbook):
-
-```bash
-sudo ./install.sh
-```
-
-To see what will happen without making changes:
-
-```bash
-sudo ./install.sh -d
-```
-
----
-
-## 🔒 Optional Hardening
-
-These two features are part of the complete stack but require external resources, so they are not enabled by default. Enable them for a fully hardened deployment.
-
-### At-rest Disk Encryption (LUKS)
-
-Encrypts a separate data volume for Postgres data with automatic unlock on boot. Set in `env/supabase.yml`:
-
-```yaml
-supabase_encryption:
-  enabled: true
-luks_device: /dev/disk/by-id/YOUR_VOLUME_NAME
-luks_mount_point: /data
-```
-
-Then uncomment the `luks` role in `playbook-supabase.yml` (see step 5).
-
-### Automated Backups + PITR (pgBackRest)
-
-Runs pgBackRest **inside** the `supabase-db` container (the upstream `supabase/postgres` image is not forked; the pgbackrest binary + libs are bind-mounted in). Provides continuous WAL archiving, scheduled full + differential backups, point-in-time recovery, and repo-integrity verification. Defaults to a local MinIO repo (no off-box protection — a loud warning is printed); switch to an external S3 bucket for real protection. When enabled, the installer brings up MinIO before Supabase so WAL archiving resolves on the db's first boot. Set in `config.yml`:
-
-```yaml
-components:
-  backup: true
-advanced:
-  backup:
-    repo_type: s3              # minio (local, default) | s3 (external) | posix (local fs)
-    s3_endpoint: https://<your-endpoint>   # host-only (no URL path); e.g. https://s3.eu-west-1.amazonaws.com
-    s3_region: us-east-1
-    s3_bucket: supabase-backups
-    s3_access_key: <your-key>
-    s3_secret_key: <your-secret>
-    # Encryption is forced ON for external S3 repos.
-    # Credentials default to a plaintext .env file; set creds_source: vault
-    # to load them from Ansible Vault instead.
-```
-
-Then run `./setup.sh` (it regenerates `playbook-supabase.yml` from the toggles — no manual uncommenting needed). See [docs/advanced-docs.md](docs/advanced-docs.md) for the restore-during-an-incident runbook, retention tuning, and the full hardening checklist.
+LUKS encrypts a dedicated volume holding the Postgres data directory, with automatic
+unlock on boot.
 
 ---
 
@@ -390,31 +241,13 @@ Then run `./setup.sh` (it regenerates `playbook-supabase.yml` from the toggles �
 | `db` | PostgreSQL 17 | 5432 |
 | `supavisor` | Connection Pooler | 6543 |
 
-Plus the security/monitoring stack: **Caddy** (reverse proxy + TLS + SSO), **UFW** firewall, **Fail2ban**, and **Grafana/Prometheus/Loki**.
+Plus the security and monitoring stack: **Caddy** (reverse proxy + TLS + SSO), **UFW**
+firewall, **Fail2ban**, and **Grafana / Prometheus / Loki**.
 
 Every deployment also writes:
 - **`/etc/supabase/instance.json`** — the instance manifest (JSON contract: ports, container names, endpoints, secret *locations*). No secret values, ever.
 - **`/usr/local/bin/supabase-agent`** — an MCP server over SSH stdio for AI agents (read-only tools, no secret values).
 - **`/usr/local/bin/supabase-selfhosted`** — a CLI to read the manifest and resolve secrets (TTY-aware redaction).
-
----
-
-## 📚 Advanced Features
-
-| Feature | Description |
-|---------|-------------|
-| **Caddy Reverse Proxy + SSO** | Automatic TLS, GitHub/GitLab/Discord/Generic OIDC, basic auth, IP allow lists |
-| **Monitoring Stack** | Grafana, Prometheus, Loki, Node Exporter, cAdvisor, Postgres Exporter |
-| **LUKS Encryption** | At-rest disk encryption for Postgres data |
-| **Backups + PITR** | pgBackRest: continuous WAL archiving, scheduled full/diff backups, point-in-time recovery, repo verification |
-| **Fail2ban** | Brute-force protection for PostgreSQL |
-| **UFW Firewall** | Fine-grained allow/deny rules |
-| **Secure MCP Access** | MCP server restricted to localhost; authorized clients connect via SSH tunnel — no public exposure |
-| **Instance Manifest** | `/etc/supabase/instance.json` — a JSON contract describing the instance (ports, containers, endpoints, secret locations) |
-| **SSH-stdio Agent** | `/usr/local/bin/supabase-agent` — MCP over SSH stdio for AI agents; read-only tools, no secret values |
-| **Info CLI** | `supabase-selfhosted info` — reads the manifest, resolves secrets with TTY-aware redaction |
-
-Full documentation: **[docs/advanced-docs.md](docs/advanced-docs.md)**
 
 ---
 
@@ -463,87 +296,169 @@ This is **v1**: the playbook writes nothing on your machine — it prints a snip
 
 ---
 
-The Supabase MCP server is exposed at `/mcp` through the Kong gateway (routed to
-Studio's `/api/mcp`). It is **never publicly reachable** — Kong's
-`ip-restriction` allow list defaults to the Docker bridge gateway
-(`172.28.0.1`; Docker source-NATs host connections to that gateway), so only
-host-originated traffic can reach it. Caddy never reverse-proxies `/mcp`, and
-the direct `/api/mcp` path stays blocked (403).
+## 🔒 Optional Hardening
 
-Authorized clients connect through an SSH tunnel, reusing the existing SSH
-access (port 22) — no new public ports or subdomains:
+Both features below are part of the complete stack but need external resources — a
+dedicated disk volume and S3 credentials respectively — so they ship disabled.
 
-```bash
-ssh -L 8080:localhost:8000 deploy_user@sb.example.com -N
+### Automated Backups + PITR (pgBackRest)
+
+pgBackRest runs **inside** the `supabase-db` container (the upstream
+`supabase/postgres` image is not forked; the binary and libraries are bind-mounted
+in). It defaults to a local MinIO repo, which gives you no off-box protection and
+prints a loud warning — switch to an external S3 bucket for real protection. When
+enabled, the installer brings MinIO up before Supabase so WAL archiving resolves on
+the database's first boot.
+
+```yaml
+components:
+  backup: true
+advanced:
+  backup:
+    repo_type: s3              # minio (local, default) | s3 (external) | posix (local fs)
+    s3_endpoint: https://<your-endpoint>   # host-only, no URL path
+    s3_region: us-east-1
+    s3_bucket: supabase-backups
+    s3_access_key: <your-key>
+    s3_secret_key: <your-secret>
+    # Encryption is forced ON for external S3 repos.
+    # Credentials default to a plaintext .env file; set creds_source: vault
+    # to load them from Ansible Vault instead.
 ```
 
-Then point your MCP client at:
+Retention tuning, encryption, credential sourcing and the restore runbook:
+[docs/advanced-docs.md](docs/advanced-docs.md#backups-pgbackrest).
 
+### At-rest Disk Encryption (LUKS)
+
+Encrypts a separate data volume for the Postgres data directory, unlocked
+automatically on boot.
+
+```yaml
+components:
+  luks: true
+advanced:
+  luks:
+    device: /dev/disk/by-id/YOUR_VOLUME_NAME
+    mount_point: /data
 ```
-http://localhost:8080/mcp
-```
 
-- The allow list is configurable via `mcp_allowed_ips` in `env/supabase.yml`.
-  Add a private VPN subnet (e.g. `10.0.0.0/24`) to allow it in addition, or set
-  `mcp_allowed_ips: []` to fully disable `/mcp`.
-- **Warning:** adding a public IP or `0.0.0.0/0` re-exposes the endpoint to the
-  Internet — don't.
-
-Full details: **[docs/advanced-docs.md → "Secure MCP Remote Access"](docs/advanced-docs.md#secure-mcp-remote-access)**
+Then re-run `sudo bash setup.sh` — it regenerates `playbook-supabase.yml` from the
+component toggles, so there is nothing to uncomment by hand.
 
 ---
 
 ## 🚚 Migration from Supabase Cloud
 
-Once your self-hosted stack is running, you can migrate an existing Supabase
-Cloud project into it with a single command. The `migrate.sh` script is a
-**Layer 1 walking skeleton**: it migrates schema + data, auth users (UUIDs
-preserved), and storage objects, then prints a checklist of the manual steps
-that remain.
+Once your self-hosted stack is running, `migrate.sh` moves an existing Supabase Cloud
+project into it. It is a **Layer 1 walking skeleton**: it migrates schema, data, auth
+users and storage objects, then prints a checklist of the manual steps that remain.
 
 ### What migrates automatically
 
-- **Database schema + data** — `pg_dump`/`pg_restore` across Supabase-managed
-  schemas (`public`, `auth`, `storage`, `_realtime`, `graphql_public`,
-  `extensions`, `pgsodium`). Missing schemas are skipped with a warning.
-- **Auth users** — `auth.users` and `auth.identities` migrated with UUIDs
-  preserved. Password hashes migrate, so existing passwords still work; users
-  must log in again (sessions are not migrated).
-- **Storage objects** — copied via `rclone` from the Cloud S3 endpoint to your
-  self-hosted storage (read-only against the source).
+- **Database schema + data** — `pg_dump`/`pg_restore` across the Supabase-managed
+  schemas (`public`, `auth`, `storage`, `_realtime`, `graphql_public`, `extensions`,
+  `pgsodium`). Missing schemas are skipped with a warning.
+- **Auth users** — `auth.users` and `auth.identities` with UUIDs preserved. Password
+  hashes migrate, so existing passwords keep working; users must log in again
+  (sessions are not migrated).
+- **Storage objects** — copied with `rclone` from the Cloud S3 endpoint to your
+  self-hosted storage, read-only against the source.
 
-### What stays manual (printed at the end)
+### What stays manual
 
-Auth configuration, Edge Functions, cron jobs, webhooks, storage bucket
-configuration, and client env-var updates. The script prints a fixed checklist
-at the end — migration is incomplete but never silently incomplete.
+Auth configuration, Edge Functions, cron jobs, webhooks, storage bucket configuration
+and client env-var updates. The script prints the full checklist when it finishes —
+the migration is incomplete, but never *silently* incomplete.
 
 ### Usage
 
 ```bash
-# 1. Copy the example config and edit it
 cp env/migrate.example.yml env/migrate.yml
-# Edit env/migrate.yml: fill in the SOURCE (Cloud) and TARGET (self-hosted) sections
+$EDITOR env/migrate.yml       # fill the SOURCE (Cloud) and TARGET (self-hosted) sections
 
-# 2. Preview the migration plan (no changes made)
-./migrate.sh --config env/migrate.yml --dry-run
-
-# 3. Run the migration (non-interactive, for CI/automation)
-./migrate.sh --config env/migrate.yml --yes
+./migrate.sh --config env/migrate.yml --dry-run   # preview the plan, no changes
+./migrate.sh --config env/migrate.yml --yes       # run it
 ```
 
 ### Invariants
 
-- **Read-only against the source.** Always. The script uses `pg_dump`
-  (inherently read-only) and `rclone copy` (not `sync`/`move`), and refuses to
-  run if `source.db_url == target.db_url`.
+- **Read-only against the source. Always.** `pg_dump` is inherently read-only,
+  `rclone copy` never deletes, and the script refuses to run if
+  `source.db_url == target.db_url`.
 - **Refuses a non-empty target.** Layer 1 migrates into a fresh instance only.
 - **No resumability.** A failure means starting over.
-- **Runs with no TTY.** `--yes` gates all prompts; colors auto-disable.
+- **Runs with no TTY.** `--yes` gates every prompt; colors auto-disable.
 
-See [docs/designs/migration-layer-1.md](docs/designs/migration-layer-1.md) for
-the full design and [docs/test-cases/migration-layer-1.md](docs/test-cases/migration-layer-1.md)
-for the test matrix.
+Design and test matrix:
+[docs/designs/migration-layer-1.md](docs/designs/migration-layer-1.md) ·
+[docs/test-cases/migration-layer-1.md](docs/test-cases/migration-layer-1.md)
+
+---
+
+## 🔒 Secure MCP Remote Access
+
+The Supabase MCP server is exposed at `/mcp` through the Kong gateway (routed to
+Studio's `/api/mcp`). It is **never publicly reachable** — Kong's `ip-restriction`
+allow list defaults to the Docker bridge gateway (`172.28.0.1`; Docker source-NATs
+host connections to that gateway), so only host-originated traffic reaches it. Caddy
+never reverse-proxies `/mcp`, and the direct `/api/mcp` path stays blocked (403).
+
+Authorized clients connect through an SSH tunnel, reusing existing SSH access on port
+22 — no new public ports, no new subdomains:
+
+```bash
+ssh -L 8080:localhost:8000 deploy_user@sb.example.com -N
+```
+
+Then point your MCP client at `http://localhost:8080/mcp`.
+
+The allow list is configurable via `mcp_allowed_ips` in `env/supabase.yml`. Add a
+private VPN subnet (e.g. `10.0.0.0/24`) to allow it in addition, or set
+`mcp_allowed_ips: []` to disable `/mcp` entirely.
+
+> **⚠️ Adding a public IP or `0.0.0.0/0` re-exposes the endpoint to the internet.**
+> Don't.
+
+Full details:
+[docs/advanced-docs.md → Secure MCP Remote Access](docs/advanced-docs.md#secure-mcp-remote-access)
+
+---
+
+## 🔧 Manual Installation
+
+If you prefer to control `env/supabase.yml` and `playbook-supabase.yml` directly — or
+you are upgrading from a setup that predates `setup.sh` — the original flow still
+works:
+
+```bash
+sh generate-keys.sh          # writes all Supabase secrets into env/supabase.yml
+$EDITOR env/supabase.yml     # fill every field tagged #REQUIRED
+$EDITOR playbook-supabase.yml # uncomment the roles you want
+sudo ./install.sh            # add -d for a dry run
+```
+
+`env/supabase.yml` ships with secure defaults — basic auth, IP allow-list and SSO on
+the dashboard. **Keep them.**
+
+The full variable reference, every SSO provider block, the Caddy `projects`
+configuration, Grafana authentication modes and the firewall rules are documented in
+**[docs/advanced-docs.md](docs/advanced-docs.md)**.
+
+---
+
+## 💬 Support
+
+Issues and pull requests are welcome, and the bar is low —
+[CONTRIBUTING.md](CONTRIBUTING.md) covers how to run the whole test suite without a
+server, and how configuration flows from `config.yml` down to the playbook.
+
+Security reports go through [SECURITY.md](SECURITY.md), not public issues. That file
+is also the honest account of what this project does and does not protect you from.
+
+This project is built and maintained by [ankaboot](https://ankaboot.io/), who run it
+in production. If you want the stack deployed or operated for you — or help migrating
+off Supabase Cloud — get in touch at [ankaboot.io](https://ankaboot.io/).
 
 ---
 
