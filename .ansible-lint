@@ -1,0 +1,34 @@
+---
+# ansible-lint configuration.
+#
+# Philosophy: this gate exists to catch things that break a deployment —
+# unparseable YAML, unresolvable modules, invalid role metadata. Style rules
+# are skipped rather than fixed in bulk, so the gate is meaningful from day
+# one instead of red on arrival.
+#
+# The skip_list below is a backlog, not a verdict. `no-changed-when` in
+# particular is why the idempotence check in CI is currently advisory: 18
+# tasks report "changed" on every run, so a re-run is never a clean no-op.
+# Removing entries here is how that gets fixed, one rule at a time.
+
+exclude_paths:
+  - .github/
+  - env/
+  - tests/
+  - docs/
+
+skip_list:
+  # ── Formatting: yamllint owns this, no need to report it twice ──
+  - yaml
+
+  # ── Naming and style: cosmetic, high volume, zero runtime impact ──
+  - fqcn                      # 74 occurrences — bare module names still resolve
+  - var-naming                # 44 — role vars not prefixed with the role name
+  - name                      # task names not capitalised / missing
+
+  # ── Idempotence backlog: real, tracked, not yet fixed ──
+  - no-changed-when           # 18 — commands always report changed
+  - no-handler                # 2 — state change handled inline, not via handler
+  - command-instead-of-module
+  - risky-shell-pipe
+  - latest                    # git clone without a pinned version

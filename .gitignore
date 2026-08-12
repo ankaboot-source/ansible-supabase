@@ -12,3 +12,5 @@
 *.swp
 *.swo
 *~
+# ansible-lint / ansible-galaxy local cache
+.ansible/

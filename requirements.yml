@@ -1,0 +1,14 @@
+---
+# Ansible collections this playbook depends on.
+#
+# The `ansible` apt package bundles these, so `install.sh` works without
+# installing them explicitly. A minimal `ansible-core` install does not —
+# without them, the luks role fails to resolve community.crypto.luks_device.
+#
+# Install with:
+#   ansible-galaxy collection install -r requirements.yml
+
+collections:
+  - name: community.crypto   # luks_device — at-rest disk encryption role
+  - name: community.general  # misc modules used across roles
+  - name: ansible.posix      # mount — used by the luks role

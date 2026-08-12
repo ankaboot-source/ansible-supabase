@@ -20,9 +20,15 @@ to discover what was even deployed, and nothing to restore from the day the data
 breaks. So you hand-feed your agent connection strings, or hand it a `service_role`
 key and hope.
 
-This distribution refuses that trade. One command deploys the stack, hardens it,
-backs it up continuously, watches it — and exposes it to your coding agent through a
-read-only channel that never leaves the SSH tunnel and never returns a secret.
+This distribution closes that gap. One command deploys the stack, applies hardened
+defaults, backs it up continuously, watches it — and exposes it to your coding agent
+through a read-only channel carried over SSH, with tools that are not given secret
+values to return.
+
+It does that by composing things other people built well — Supabase, Caddy,
+pgBackRest, Postgres, LUKS — rather than by inventing any of it. The work here is the
+defaults and the wiring. What that does and does not buy you is written down in
+[SECURITY.md](SECURITY.md), including the parts that are on you.
 
 | What you worry about | Supabase Cloud | `docker compose` self-host | This project |
 |---|---|---|---|
@@ -152,8 +158,11 @@ told.
 Agents connect over **SSH stdio** to a restricted key that can run exactly one command:
 a read-only MCP server exposing `list_tables`, `describe_table`, SELECT-only `query`,
 container status, and the manifest. No public port, no `service_role` key handed over,
-and no tool that can return a secret. The `supabase-selfhosted info` CLI shows real
-values on a terminal and redacts them the moment its output is piped.
+and no tool whose output includes secret values. The `supabase-selfhosted info` CLI
+shows real values on a terminal and redacts them the moment its output is piped.
+
+Read-only is not the same as harmless — read access to a database is still access to
+the data in it. Give an agent this the way you would give it a read replica.
 
 Setup for Claude Code, Codex, opencode and pi:
 [docs/connect-your-agent.md](docs/connect-your-agent.md). The whole stack is documented
@@ -373,12 +382,16 @@ configuration, Grafana authentication modes and the firewall rules are documente
 
 ## 💬 Support
 
-This project is built and maintained by [ankaboot](https://ankaboot.io/), who run it
-in production. If you want the stack deployed, audited or operated for you — or you
-need help migrating off Supabase Cloud — get in touch at
-[ankaboot.io](https://ankaboot.io/).
+Issues and pull requests are welcome, and the bar is low —
+[CONTRIBUTING.md](CONTRIBUTING.md) covers how to run the whole test suite without a
+server, and how configuration flows from `config.yml` down to the playbook.
 
-Issues and pull requests are welcome.
+Security reports go through [SECURITY.md](SECURITY.md), not public issues. That file
+is also the honest account of what this project does and does not protect you from.
+
+This project is built and maintained by [ankaboot](https://ankaboot.io/), who run it
+in production. If you want the stack deployed or operated for you — or help migrating
+off Supabase Cloud — get in touch at [ankaboot.io](https://ankaboot.io/).
 
 ---
 

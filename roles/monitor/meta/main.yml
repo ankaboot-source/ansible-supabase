@@ -1,10 +1,12 @@
+---
 galaxy_info:
-  role_name: supabase
+  role_name: monitor
   author: zied
-  description: Install Supabase
+  description: Install the Grafana / Prometheus / Loki monitoring stack
   company: ankaboot.io
+  license: MIT
 
-  min_ansible_version: 2.2
+  min_ansible_version: "2.2"
 
   platforms:
     - name: Ubuntu
