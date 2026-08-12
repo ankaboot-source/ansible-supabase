@@ -573,6 +573,16 @@ services:
     container_name: supabase-pooler{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     image: {{ sb_supavisor_version }}
     restart: unless-stopped
+    # Supavisor's entrypoint raises RLIMIT_NOFILE to 100000 for connection
+    # pooling, and cannot: a process may lower its own hard limit but never
+    # raise it, so /app/limits.sh fails with "Operation not permitted" and the
+    # container restarts forever. The limit has to be granted at creation
+    # time, which is what this does. Not CI-specific — it happens on any host
+    # whose default container nofile ceiling is below what the image asks for.
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
     ports:
 #      - 127.0.0.1:${POSTGRES_PORT}:5432
       - 127.0.0.1:${POOLER_PROXY_PORT_TRANSACTION}:6543
