@@ -1,8 +1,9 @@
 # Supabase Self-Host Ops
 
-**Run Supabase on your own server, in production.** SSO on the dashboard, continuous
-backups with point-in-time recovery, full monitoring, at-rest disk encryption — and
-one command to migrate off Supabase Cloud.
+**The AI-ready Supabase distribution for production self-hosting.** Point your coding
+agent at your own server and build — with the developer experience you get from
+Supabase Cloud, on a stack that ships with SSO, point-in-time recovery, monitoring
+and disk encryption.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -10,16 +11,22 @@ one command to migrate off Supabase Cloud.
 
 ## Why this exists
 
-Supabase Cloud sells you point-in-time recovery, an authenticated dashboard, daily
-backups and monitoring. The official self-hosting path — `docker compose up` on the
-sample stack — gives you **none of them**: your Studio dashboard is open to the
-internet, and the day your database breaks, there is nothing to restore from.
+Building on Supabase Cloud works right up to the bill, the data-residency question,
+or the day the database has to live somewhere you control. Self-hosting answers all
+three — and throws away everything that made the workflow work in the first place.
+The official path, `docker compose up` on the sample stack, leaves you with a Studio
+dashboard open to the internet, no endpoint your agent can talk to, no way for a tool
+to discover what was even deployed, and nothing to restore from the day the database
+breaks. So you hand-feed your agent connection strings, or hand it a `service_role`
+key and hope.
 
-This project closes that gap. It is the operations layer for self-hosted Supabase:
-one command deploys the stack, hardens it, backs it up continuously, and watches it.
+This distribution refuses that trade. One command deploys the stack, hardens it,
+backs it up continuously, watches it — and exposes it to your coding agent through a
+read-only channel that never leaves the SSH tunnel and never returns a secret.
 
 | What you worry about | Supabase Cloud | `docker compose` self-host | This project |
 |---|---|---|---|
+| Building with an AI agent | ✅ Hosted MCP | ❌ Hand-fed credentials | ✅ Read-only MCP over SSH, no public port |
 | Losing the database | Paid PITR add-on | ❌ Nothing | ✅ pgBackRest: continuous WAL + PITR |
 | Dashboard exposed | ✅ Managed auth | ❌ Open to the internet | ✅ OIDC + basic auth + IP allow-list |
 | Not seeing the outage | Basic reports | ❌ Nothing | ✅ Grafana + Prometheus + Loki |
@@ -134,6 +141,24 @@ Full configuration reference: **[docs/advanced-docs.md](docs/advanced-docs.md)**
 
 ## 🎁 What You Get
 
+### Your coding agent can build on it
+
+Every deployment writes an **instance manifest** (`/etc/supabase/instance.json`): a
+machine-readable contract describing ports, container names, endpoints, and where each
+secret lives — never the secret values themselves, with leak assertions that fail the
+run if one slips through. That is how a tool discovers what was deployed without being
+told.
+
+Agents connect over **SSH stdio** to a restricted key that can run exactly one command:
+a read-only MCP server exposing `list_tables`, `describe_table`, SELECT-only `query`,
+container status, and the manifest. No public port, no `service_role` key handed over,
+and no tool that can return a secret. The `supabase-selfhosted info` CLI shows real
+values on a terminal and redacts them the moment its output is piped.
+
+Setup for Claude Code, Codex, opencode and pi:
+[docs/connect-your-agent.md](docs/connect-your-agent.md). The whole stack is documented
+for agents in [`AGENTS.md`](AGENTS.md).
+
 ### You don't lose your database
 
 pgBackRest runs inside the `supabase-db` container: continuous WAL archiving,
@@ -171,12 +196,6 @@ read-only against the source. See
 
 LUKS encrypts a dedicated volume holding the Postgres data directory, with automatic
 unlock on boot.
-
-### Your AI agent can operate it without exposing it
-
-The Supabase MCP server is reachable only from the host, over an SSH tunnel — never
-published to the internet. See [Secure MCP Remote Access](#-secure-mcp-remote-access).
-[`AGENTS.md`](AGENTS.md) documents the whole stack for coding agents.
 
 ---
 
