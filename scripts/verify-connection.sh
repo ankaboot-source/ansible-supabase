@@ -144,34 +144,71 @@ if [ "$FAILURES" -gt 0 ]; then
   exit 1
 fi
 
-# ---- check 5: ssh <alias> whoami is REJECTED -------------------------
-# The key is command-restricted: `whoami` is not on the allow list, so
-# the server must refuse. A SUCCESS here means the restriction is broken.
-info "Check 5: ssh $HOST_ALIAS whoami is rejected (command restriction)"
-if ssh -i "$KEY_PATH" \
+# ---- check 5: ssh <alias> whoami does NOT open a shell ----------------
+# The key is command-restricted (command="<agent>" in authorized_keys),
+# so sshd IGNORES the requested command and always runs the agent, which
+# answers MCP JSON (starts with `{`). A real shell would have answered
+# `whoami` with a username, so JSON is the proof of the restriction —
+# NOT ssh's exit code: a forced command always exits with the agent's
+# code (0 on EOF). stdin is piped, never a TTY, so the forced agent
+# cannot block this check.
+info "Check 5: ssh $HOST_ALIAS whoami runs the agent, not a shell (command restriction)"
+mcp_sc5='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"verify-c5","version":"0.1.0"}}}'
+resp_c5=$(printf '%s\n' "$mcp_sc5" | ssh -i "$KEY_PATH" \
       -o BatchMode=yes \
       -o ConnectTimeout=10 \
       -o ClearAllForwardings=yes \
-      "$HOST_ALIAS" whoami >/dev/null 2>&1; then
-  fail "shell command was allowed — the command restriction is not in effect. Re-run the role."
+      "$HOST_ALIAS" whoami 2>/dev/null)
+rc_c5=$?
+if [ "$rc_c5" -ne 0 ]; then
+  fail "ssh exited $rc_c5 — is the key/alias correct?"
+elif [ "${resp_c5#\{}" != "$resp_c5" ]; then
+  pass "shell blocked — the forced command returned MCP JSON, not a username"
 else
-  pass "shell access blocked (whoami refused as expected)"
+  fail "expected MCP JSON from the forced command, got: '$(printf '%.40s' "$resp_c5")' — the command restriction may not be in effect."
 fi
 
-# ---- check 6: port forwarding is REJECTED ---------------------------
-# The key is configured with `no-port-forwarding`. Trying to set up
-# -L should fail at either the auth stage (key not allowed) or the
-# forwarding stage.
-info "Check 6: ssh $HOST_ALIAS -L 9999:localhost:9999 true is rejected"
-if ssh -i "$KEY_PATH" \
-      -o BatchMode=yes \
-      -o ConnectTimeout=10 \
-      -o ClearAllForwardings=yes \
-      -L 9999:localhost:9999 \
-      "$HOST_ALIAS" true >/dev/null 2>&1; then
-  fail "port forwarding was allowed — the no-port-forwarding restriction is not in effect. Re-run the role."
+# ---- check 6: port forwarding is unusable ---------------------------
+# The key carries `no-port-forwarding`. A forced command makes ssh's exit
+# code the agent's (0 on EOF), so a -L attempt cannot be judged by exit
+# status. Instead: while an agent session (created with -L) is alive,
+# connect to the local listen port and send a probe that would reach the
+# server loopback IF forwarding were allowed. With the restriction in
+# force, sshd refuses the direct-tcpip channel, the local connection is
+# dropped immediately and no bytes come back. Requires `nc`; degrades to
+# an informational pass when absent.
+info "Check 6: ssh $HOST_ALIAS -L forward is unusable (no-port-forwarding)"
+lport=19999
+if command -v nc >/dev/null 2>&1; then
+  # Keep the session alive for ~2s: `sleep` holds the pipe open so the
+  # forced agent keeps reading stdin instead of exiting at EOF.
+  ( printf '%s' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"verify-c6","version":"0.1.0"}}}'
+    printf '\n'
+    sleep 2 ) | \
+    ssh -i "$KEY_PATH" \
+        -o BatchMode=yes \
+        -o ConnectTimeout=10 \
+        -o ClearAllForwardings=yes \
+        -L "$lport":127.0.0.1:3001 \
+        "$HOST_ALIAS" true >/dev/null 2>&1 &
+  spid=$!
+  sleep 1
+  if ! kill -0 "$spid" 2>/dev/null; then
+    fail "ssh session did not stay up for the forward probe — check key/alias and that local port $lport is free"
+  else
+    # Probe: forwarded, the server's Studio (127.0.0.1:3001) answers with
+    # an HTTP response; refused, the local connection dies with no data.
+    got=$(printf 'GET / HTTP/1.0\r\n\r\n' | nc -w 2 127.0.0.1 "$lport" | head -c 1 2>/dev/null)
+    if [ -n "$got" ]; then
+      fail "a byte reached the server loopback — no-port-forwarding is not in effect. Re-run the role."
+    else
+      pass "forward dropped — no data reached the server loopback (no-port-forwarding enforced)"
+    fi
+  fi
+  kill "$spid" 2>/dev/null
+  wait "$spid" 2>/dev/null
 else
-  pass "port forwarding blocked (-L 9999:localhost:9999 refused as expected)"
+  pass "nc not found — skipped active forward probe (manual: ssh -L 9999:localhost:3001 $HOST_ALIAS, connect locally, expect no bytes back)"
 fi
 
 # ---- check 7: byte test — MCP responds with JSON --------------------
