@@ -1,0 +1,44 @@
+{% set env_suffix = '-' + deploy_env if deploy_env != 'changeit' else '' -%}
+{
+  "schema_version": {{ manifest_schema_version }},
+  "generated_at": "{{ now(fmt='%Y-%m-%dT%H:%M:%SZ') }}",
+  "generated_by": "{{ manifest_generated_by }}",
+  "supabase": {
+    "version": "{{ sb_db }}",
+    "installed_at": "{{ manifest_installed_at | default(now(fmt='%Y-%m-%dT%H:%M:%SZ')) }}"
+  },
+  "db": {
+    "host": "localhost",
+    "port_direct": 5432,
+    "port_pooler": 6543,
+    "tenant_id": "{{ pooler_tenant_id }}",
+    "user": "postgres",
+    "dbname": "postgres",
+    "sslmode": "disable"
+  },
+  "paths": {
+    "docker_dir": "/home/{{ deploy_user }}/{{ supabase_path }}",
+    "functions_volume": "/home/{{ deploy_user }}/{{ supabase_path }}/volumes/functions",
+    "env_file": "/home/{{ deploy_user }}/{{ supabase_path }}/.env"
+  },
+  "containers": {
+    "db": "supabase-db{{ env_suffix }}",
+    "edge_runtime": "supabase-edge-functions{{ env_suffix }}",
+    "kong": "supabase-kong{{ env_suffix }}",
+    "auth": "supabase-auth{{ env_suffix }}",
+    "storage": "supabase-storage{{ env_suffix }}",
+    "rest": "supabase-rest{{ env_suffix }}"
+  },
+  "endpoints": {
+    "api": "{{ api_external_url }}",
+    "studio": "http://127.0.0.1:3001"
+  },
+  "secrets": {
+    "postgres_password": { "env_file": "/home/{{ deploy_user }}/{{ supabase_path }}/.env", "key": "POSTGRES_PASSWORD" },
+    "jwt_secret": { "env_file": "/home/{{ deploy_user }}/{{ supabase_path }}/.env", "key": "JWT_SECRET" },
+    "anon_key": { "env_file": "/home/{{ deploy_user }}/{{ supabase_path }}/.env", "key": "ANON_KEY" },
+    "service_role_key": { "env_file": "/home/{{ deploy_user }}/{{ supabase_path }}/.env", "key": "SERVICE_ROLE_KEY" },
+    "dashboard_password": { "env_file": "/home/{{ deploy_user }}/{{ supabase_path }}/.env", "key": "DASHBOARD_PASSWORD" },
+    "dashboard_username": { "env_file": "/home/{{ deploy_user }}/{{ supabase_path }}/.env", "key": "DASHBOARD_USERNAME" }
+  }
+}

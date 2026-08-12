@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""supabase-selfhosted — instance info CLI.
+
+Reads the instance manifest at /etc/supabase/instance.json (or
+$SUPABASE_INSTANCE_MANIFEST) and prints connection information. Secrets
+are resolved against the env file referenced in the manifest and are
+redacted by default unless stdout is a TTY, --show-secrets is passed,
+or --json is paired with --show-secrets.
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+from typing import Any, Dict, List, Optional, Tuple
+
+MANIFEST_ENV = "SUPABASE_INSTANCE_MANIFEST"
+DEFAULT_MANIFEST = "/etc/supabase/instance.json"
+
+REDACTED = "••••"
+
+
+# ---------------------------------------------------------------------------
+# Manifest / env-file loading
+# ---------------------------------------------------------------------------
+
+def _resolve_manifest_path() -> str:
+    env = os.environ.get(MANIFEST_ENV, "").strip()
+    if env:
+        return env
+    return DEFAULT_MANIFEST
+
+
+def load_manifest() -> Dict[str, Any]:
+    with open(_resolve_manifest_path(), "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _parse_env_value(raw: str) -> str:
+    """Strip surrounding quotes from a .env value if present."""
+    s = raw.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        return s[1:-1]
+    return s
+
+
+def parse_env_file(path: str) -> Dict[str, str]:
+    """Parse a .env file into a flat dict. Ignores comments and blanks."""
+    out: Dict[str, str] = {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.rstrip("\n")
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if not key:
+                    continue
+                out[key] = _parse_env_value(value)
+    except FileNotFoundError:
+        return {}
+    return out
+
+
+def resolve_secret(spec: Dict[str, str], envs: Dict[str, Dict[str, str]]) -> Optional[str]:
+    """Resolve a secret reference (env_file + key) against the loaded envs."""
+    path = spec.get("env_file", "")
+    key = spec.get("key", "")
+    return envs.get(path, {}).get(key)
+
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+
+def _line(label: str, value: str, *, width: int = 18) -> str:
+    return f"  {label.ljust(width)}{value}"
+
+
+def _line_redacted(label: str, env_file: str, key: str, *, width: int = 18) -> str:
+    return f"  {label.ljust(width)}{REDACTED}  (env_file: {env_file}, key: {key})"
+
+
+def render_human(manifest: Dict[str, Any], secrets: Dict[str, Optional[str]],
+                 show_secrets: bool) -> str:
+    db = manifest.get("db", {})
+    paths = manifest.get("paths", {})
+    endpoints = manifest.get("endpoints", {})
+    generated = manifest.get("generated_at", "?")
+    generated_by = manifest.get("generated_by", "?")
+
+    db_host = db.get("host", "localhost")
+    db_port_direct = db.get("port_direct", 5432)
+    db_port_pooler = db.get("port_pooler", 6543)
+    db_user = db.get("user", "postgres")
+    db_name = db.get("dbname", "postgres")
+    db_ssl = db.get("sslmode", "disable")
+    db_tenant = db.get("tenant_id", "000000")
+
+    api_url = endpoints.get("api", "?")
+    studio_url = endpoints.get("studio", "?")
+
+    postgres_password = secrets.get("postgres_password") or ""
+    jwt_secret = secrets.get("jwt_secret") or ""
+    anon_key = secrets.get("anon_key") or ""
+    service_role_key = secrets.get("service_role_key") or ""
+    dashboard_username = secrets.get("dashboard_username") or ""
+    dashboard_password = secrets.get("dashboard_password") or ""
+
+    def _db_pwd() -> str:
+        return postgres_password if show_secrets else REDACTED
+
+    def _db_pwd_ref() -> Tuple[str, str]:
+        spec = manifest.get("secrets", {}).get("postgres_password", {})
+        return spec.get("env_file", "?"), spec.get("key", "?")
+
+    def _secret_or_ref(label: str, key_name: str) -> str:
+        spec = manifest.get("secrets", {}).get(key_name, {})
+        if show_secrets:
+            value = secrets.get(key_name) or ""
+            return f"  {label.ljust(18)}{value}"
+        return _line_redacted(label, spec.get("env_file", "?"), spec.get("key", "?"))
+
+    lines: List[str] = []
+    lines.append(f"Supabase instance — generated {generated} by {generated_by}")
+    lines.append("")
+    lines.append("Database:")
+    lines.append(_line("Direct:",
+                       f"postgresql://{db_user}:{_db_pwd()}@{db_host}:{db_port_direct}/{db_name}?sslmode={db_ssl}"))
+    lines.append(_line("Pooler:",
+                       f"postgresql://{db_user}:{_db_pwd()}@{db_host}:{db_port_pooler}/{db_name}?sslmode={db_ssl}"))
+    lines.append(_line("(tenant_id:)", db_tenant))
+    lines.append("")
+    lines.append("API:")
+    lines.append(_line("URL:", api_url))
+    lines.append(_secret_or_ref("anon key:", "anon_key"))
+    lines.append(_secret_or_ref("service_role key:", "service_role_key"))
+    lines.append(_secret_or_ref("JWT secret:", "jwt_secret"))
+    lines.append("")
+    lines.append(f"Studio:  {studio_url}")
+    if show_secrets:
+        lines.append(_line("username:", dashboard_username))
+        lines.append(_line("password:", dashboard_password))
+    else:
+        spec_u = manifest.get("secrets", {}).get("dashboard_username", {})
+        spec_p = manifest.get("secrets", {}).get("dashboard_password", {})
+        lines.append(_line_redacted("username:", spec_u.get("env_file", "?"), spec_u.get("key", "?")))
+        lines.append(_line_redacted("password:", spec_p.get("env_file", "?"), spec_p.get("key", "?")))
+    lines.append("")
+    lines.append(f"Secrets are stored in: {paths.get('env_file', '?')}")
+    lines.append(f"Manifest: {_resolve_manifest_path()}")
+
+    if not show_secrets:
+        lines.append("")
+        lines.append("(Secrets redacted — run with --show-secrets on a TTY to reveal.)")
+
+    return "\n".join(lines)
+
+
+def render_json(manifest: Dict[str, Any], secrets: Dict[str, Optional[str]],
+                show_secrets: bool) -> str:
+    """Return manifest JSON with each secret annotated under `resolved`."""
+    out: Dict[str, Any] = json.loads(json.dumps(manifest))  # deep copy via JSON
+    resolved_block: Dict[str, Any] = {}
+    for name, spec in manifest.get("secrets", {}).items():
+        if show_secrets:
+            resolved_block[name] = {
+                "value": secrets.get(name) or "",
+                "env_file": spec.get("env_file"),
+                "key": spec.get("key"),
+            }
+        else:
+            resolved_block[name] = {
+                "redacted": True,
+                "env_file": spec.get("env_file"),
+                "key": spec.get("key"),
+            }
+    out["resolved"] = {"secrets": resolved_block}
+    return json.dumps(out, indent=2, sort_keys=True) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: info
+# ---------------------------------------------------------------------------
+
+def cmd_info(args: argparse.Namespace) -> int:
+    # Resolve TTY / flag interaction:
+    #   tty + default          -> show secrets
+    #   pipe + default         -> redact
+    #   --show-secrets         -> show secrets
+    #   --no-secrets           -> redact
+    #   --json                 -> redaction unless --show-secrets
+    is_tty = sys.stdout.isatty()
+    if args.show_secrets:
+        show = True
+    elif args.no_secrets:
+        show = False
+    elif args.json:
+        show = False
+    else:
+        show = is_tty
+
+    try:
+        manifest = load_manifest()
+    except FileNotFoundError:
+        print(f"error: manifest not found at {_resolve_manifest_path()}",
+              file=sys.stderr)
+        return 2
+    except json.JSONDecodeError as exc:
+        print(f"error: manifest is not valid JSON: {exc}", file=sys.stderr)
+        return 2
+
+    # Load each unique env_file referenced by secrets.
+    envs: Dict[str, Dict[str, str]] = {}
+    for spec in manifest.get("secrets", {}).values():
+        path = spec.get("env_file", "")
+        if path and path not in envs:
+            envs[path] = parse_env_file(path)
+
+    secrets: Dict[str, Optional[str]] = {
+        name: resolve_secret(spec, envs)
+        for name, spec in manifest.get("secrets", {}).items()
+    }
+
+    # Defense in depth: redact before rendering so raw secret values never
+    # reach the rendering layer when they won't be displayed. The renderers
+    # also check `show_secrets` for format decisions, but this ensures the
+    # data passed to them is already safe when show is False.
+    if not show:
+        secrets = {name: REDACTED for name in secrets}
+
+    if args.json:
+        sys.stdout.write(render_json(manifest, secrets, show))
+    else:
+        sys.stdout.write(render_human(manifest, secrets, show))
+        sys.stdout.write("\n")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Argparse
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="supabase-selfhosted",
+        description="Inspect a self-hosted Supabase instance from its manifest.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    info = sub.add_parser("info", help="Show connection info for this instance.")
+    info.add_argument("--show-secrets", action="store_true",
+                      help="Reveal secret values (e.g. for `pbcopy`).")
+    info.add_argument("--no-secrets", action="store_true",
+                      help="Force redaction even on a TTY.")
+    info.add_argument("--json", action="store_true",
+                      help="Emit JSON. Implies --no-secrets unless --show-secrets is set.")
+    info.set_defaults(func=cmd_info)
+
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not getattr(args, "command", None):
+        parser.print_help()
+        return 1
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

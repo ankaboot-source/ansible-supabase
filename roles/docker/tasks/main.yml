@@ -1,4 +1,21 @@
 ---
+- name: Read /etc/os-release ID_LIKE
+  ansible.builtin.shell: . /etc/os-release && echo "$ID_LIKE"
+  register: docker_os_release_like
+  changed_when: false
+  check_mode: false
+
+- name: Determine Docker OS family
+  ansible.builtin.set_fact:
+    docker_os_family: >-
+      {%- if docker_os_release_like.stdout is search('\\barch\\b') -%}
+      arch
+      {%- elif docker_os_release_like.stdout is search('\\b(debian|ubuntu)\\b') -%}
+      debian
+      {%- else -%}
+      {{ docker_os_family | default('debian') }}
+      {%- endif -%}
+
 - name: Install Docker's GPG key
   ansible.builtin.shell: |
     apt-get install -y ca-certificates curl
@@ -6,17 +23,20 @@
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
     chmod a+r /etc/apt/keyrings/docker.asc
   become: true
+  when: docker_os_family == 'debian'
 
 - name: Add Docker repository manually
   ansible.builtin.shell: |
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
     $(. /etc/os-release && echo \"${UBUNTU_CODENAME:-$VERSION_CODENAME}\") stable" | \
     tee /etc/apt/sources.list.d/docker.list > /dev/null
+  when: docker_os_family == 'debian'
 
 - name: Update apt
   apt:
     update_cache: yes
   become: true
+  when: docker_os_family == 'debian'
 
 - name: Install Docker packages
   become: true
@@ -26,7 +46,24 @@
       - docker-buildx-plugin
       - docker-compose-plugin
     state: present
-  when: not ansible_check_mode
+  when: docker_os_family == 'debian' and not ansible_check_mode
+
+- name: Install Docker packages (Arch)
+  become: true
+  community.general.pacman:
+    name:
+      - docker
+      - docker-compose
+    state: present
+    update_cache: yes
+  when: docker_os_family == 'arch' and not ansible_check_mode
+
+- name: Assert docker compose v2 is available
+  ansible.builtin.command: docker compose version
+  register: docker_compose_check
+  changed_when: false
+  failed_when: docker_compose_check.rc != 0
+  check_mode: false
 
 - name: Add user to docker group
   become: true
