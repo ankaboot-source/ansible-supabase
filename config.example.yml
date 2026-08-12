@@ -95,7 +95,7 @@ advanced:
 
   # ── Caddy / SSO ── (only if components.caddy: true)
   caddy:
-    sso_provider: github       # available: Generic, github, gitlab, discord
+    sso_provider: github       # available: generic, github, gitlab, discord
     root_domain: example.com
     base_auth_domain: auth.example.com
     # SSO provider credentials — fill based on your chosen sso_provider.
@@ -105,6 +105,11 @@ advanced:
     # SSO allow list — space-separated usernames/emails granted admin access.
     # Only used by github, gitlab, and generic providers (discord uses role-based auth).
     sso_allow_list: "user1@gmail.com user2@gmail.com"
+    # Optional source-IP allow list for the dashboard. Anything listed here
+    # becomes an allow list and every other source gets 403, so leave it out
+    # entirely (the default) unless you actually want that restriction.
+    # allowed_ips:
+    #   - 203.0.113.4
 
   # ── Monitor / Grafana ── (only if components.monitor: true)
   monitor:

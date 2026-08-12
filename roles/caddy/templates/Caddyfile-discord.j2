@@ -45,6 +45,11 @@
 
 {% if cfg.oidc_enabled %}
 https://{{ base_auth_domain }} {
+{% if caddy_tls_internal | default(false) %}
+    # CI/offline mode: issue from Caddy's own local CA instead of ACME,
+    # which needs a publicly resolvable name. Never set in production.
+    tls internal
+{% endif %}
     log {
         output file /var/log/caddy/caddy-auth.log {
             roll_size 10MiB
@@ -58,6 +63,11 @@ https://{{ base_auth_domain }} {
 {% endif %}
 
 https://{{ cfg.domain }} {
+{% if caddy_tls_internal | default(false) %}
+    # CI/offline mode: issue from Caddy's own local CA instead of ACME,
+    # which needs a publicly resolvable name. Never set in production.
+    tls internal
+{% endif %}
 
     log {
         output file /var/log/caddy/{{ cfg.log_file }}.log {
