@@ -254,16 +254,30 @@
       # every archive-push fails. The uid was hardcoded to 100:101, a guess
       # about the image's internals that goes wrong silently the moment the
       # image changes it. Ask the image instead.
+      # Do not go looking for a user called "postgres": nothing here establishes
+      # that name. supabase_admin, which appears throughout the config, is a
+      # PostgreSQL role rather than a Unix account, and the compose file sets no
+      # `user:`. The owner of PGDATA *is* the account the postmaster runs as,
+      # whatever it is called, so read that instead of guessing a name.
       DB_IMAGE="{{ sb_db_version }}"
-      pg_uid="$(docker run --rm --entrypoint id "$DB_IMAGE" -u postgres 2>/dev/null || true)"
-      pg_gid="$(docker run --rm --entrypoint id "$DB_IMAGE" -g postgres 2>/dev/null || true)"
+      DB_CTR="supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+      pg_ids=""
+      # A running container is the most authoritative source; on a re-run it is
+      # already there. Fall back to the image, where PGDATA itself may not exist
+      # before initdb but its parent does.
+      if docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -qx "$DB_CTR"; then
+        pg_ids="$(docker exec "$DB_CTR" stat -c '%u %g' /var/lib/postgresql/data 2>/dev/null || true)"
+      fi
+      [ -n "$pg_ids" ] || pg_ids="$(docker run --rm --entrypoint stat "$DB_IMAGE" -c '%u %g' /var/lib/postgresql/data 2>/dev/null || true)"
+      [ -n "$pg_ids" ] || pg_ids="$(docker run --rm --entrypoint stat "$DB_IMAGE" -c '%u %g' /var/lib/postgresql 2>/dev/null || true)"
+      pg_uid="${pg_ids%% *}"; pg_gid="${pg_ids##* }"
       case "$pg_uid:$pg_gid" in
         [0-9]*:[0-9]*) ;;
         *)
-          echo "WARNING: could not read postgres uid/gid from $DB_IMAGE; falling back to 100:101" >&2
+          echo "WARNING: could not read PGDATA ownership from $DB_CTR or $DB_IMAGE; falling back to 100:101" >&2
           pg_uid=100; pg_gid=101 ;;
       esac
-      echo "pgbackrest work dirs will be owned by ${pg_uid}:${pg_gid} (postgres in $DB_IMAGE)"
+      echo "pgbackrest work dirs will be owned by ${pg_uid}:${pg_gid} (owner of PGDATA)"
 
       mkdir -p "$BACKUP_DIR/volumes/pgbackrest/lock"
       mkdir -p "$BACKUP_DIR/volumes/pgbackrest-log"

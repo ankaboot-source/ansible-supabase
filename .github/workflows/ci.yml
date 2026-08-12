@@ -315,8 +315,14 @@ jobs:
           # and they succeed. archive-push is spawned by the postmaster as the
           # postgres user, and it fails every time. The difference is the user,
           # not the binary — so look at what differs for that user.
-          echo "::group::who postgres is, and what it can reach"
-          sudo docker exec supabase-db id postgres 2>&1 || true
+          # Establish who the postmaster actually runs as rather than assuming a
+          # name: "supabase_admin" in the config is a PostgreSQL role, not a Unix
+          # account, and nothing here says the account is called "postgres".
+          echo "::group::who the postmaster runs as, and what it can reach"
+          sudo docker exec supabase-db sh -c \
+            'echo "pid 1: $(ps -o user=,uid= -p 1 2>/dev/null)"; \
+             echo "PGDATA owner: $(stat -c "%U(%u):%G(%g)" /var/lib/postgresql/data 2>/dev/null)"; \
+             echo "--- passwd ---"; cat /etc/passwd 2>/dev/null | tail -12' 2>&1 || true
           sudo docker exec supabase-db ls -ldn \
             /var/lib/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest \
             /etc/pgbackrest/pgbackrest.conf /usr/bin/pgbackrest 2>&1 || true
@@ -329,7 +335,11 @@ jobs:
             'ls /var/lib/postgresql/data/pg_wal/ 2>/dev/null | grep -E "^[0-9A-F]{24}$" | head -1' 2>/dev/null || true)
           if [ -n "$wal" ]; then
             echo "segment: $wal"
-            sudo timeout 60 docker exec -u postgres supabase-db \
+            # Replay as the uid that owns PGDATA — the account the postmaster
+            # runs archive_command as — rather than as a name that may not exist.
+            pg_uid=$(sudo docker exec supabase-db stat -c '%u' /var/lib/postgresql/data 2>/dev/null || echo 0)
+            echo "replaying as uid ${pg_uid}"
+            sudo timeout 60 docker exec -u "$pg_uid" supabase-db \
               pgbackrest --stanza=main --log-level-console=detail \
               archive-push "/var/lib/postgresql/data/pg_wal/${wal}" 2>&1 || true
           else
