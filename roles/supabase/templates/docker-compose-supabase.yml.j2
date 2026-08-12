@@ -558,6 +558,8 @@ services:
       - /opt/postgres-certs:/etc/postgres/certs:ro
       {{ '- /home/' + deploy_user + '/backup/pgbackrest-wrapper:/usr/bin/pgbackrest:ro  # pgBackRest wrapper (backup role)' if backup_enabled | default(false) | bool else '' }}
       {{ '- /home/' + deploy_user + '/backup/pgbackrest-bin:/usr/lib/pgbackrest-bin:ro  # pgBackRest binary + shared libs (backup role)' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/pgbackrest-bin/ld-musl-x86_64.so.1:/lib/ld-musl-x86_64.so.1:ro  # ELF interpreter at the path the binary names, so forked workers can exec' if backup_enabled | default(false) | bool else '' }}
+      {{ '- /home/' + deploy_user + '/backup/ld-musl.path:/etc/ld-musl-x86_64.path:ro  # musl default library search path -> pgbackrest-bin' if backup_enabled | default(false) | bool else '' }}
       {{ '- /home/' + deploy_user + '/backup/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro  # pgBackRest config (backup role)' if backup_enabled | default(false) | bool else '' }}
       {{ '- /home/' + deploy_user + '/backup/volumes/pgbackrest:/var/lib/pgbackrest:z  # pgBackRest lock dir (backup role)' if backup_enabled | default(false) | bool else '' }}
       {{ '- /home/' + deploy_user + '/backup/volumes/pgbackrest-log:/var/log/pgbackrest:z  # pgBackRest logs (backup role)' if backup_enabled | default(false) | bool else '' }}

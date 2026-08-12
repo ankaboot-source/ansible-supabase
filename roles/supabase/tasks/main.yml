@@ -242,6 +242,22 @@
       fi
       chmod 755 "$BACKUP_DIR/pgbackrest-wrapper"
 
+      # Make the raw binary runnable without the wrapper.
+      #
+      # pgbackrest forks worker processes for backup, and re-executes itself to
+      # do it. Those forks never go through /usr/bin/pgbackrest, so they lose
+      # its --library-path and the loader falls back to the container's own
+      # /usr/lib — where it finds glibc builds of libxml2, libpq and libssh2 and
+      # fails with "Error relocating ...: symbol not found". The same thing
+      # broke async archiving.
+      #
+      # musl reads its default search path from /etc/ld-musl-<arch>.path, so
+      # pointing that at our directory makes every pgbackrest process resolve
+      # the right libraries, forked or not. The loader itself is bind-mounted at
+      # the canonical path the ELF header names (see the compose template).
+      echo "/usr/lib/pgbackrest-bin" > "$BACKUP_DIR/ld-musl.path"
+      chmod 644 "$BACKUP_DIR/ld-musl.path"
+
       # Ensure pgbackrest.conf placeholder exists (backup role renders the real config)
       CONF="$BACKUP_DIR/pgbackrest.conf"
       [ -f "$CONF" ] || install -m 0640 /dev/null "$CONF"
