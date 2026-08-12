@@ -38,16 +38,18 @@ Tracks the acceptance criteria from [issue #120](https://github.com/ankaboot-sou
 ---
 
 ## TC-SSH-001: Key cannot open a shell
-**Acceptance:** `ssh -i <key> <host> whoami` fails — the key cannot open a shell.
+**Acceptance:** `ssh -i <key> <alias> whoami` does not run a shell — the reply is MCP JSON, not a username.
 **Steps:**
-1. `ssh -i ~/.ssh/supabase-agent-<host> <alias> whoami`
-**Expected:** Fails (non-zero exit). The `command="..."` restriction in authorized_keys forces the agent binary, ignoring the requested command.
+1. Pipe an MCP `initialize` into the key and request `whoami` (the forced command ignores the request):
+   `printf '%s' '<mcp initialize>' | ssh -i ~/.ssh/supabase-agent-<host> <alias> whoami`
+**Expected:** stdout starts with `{` — the `command="..."` restriction in authorized_keys runs the agent, never a shell. Auto-checked by `verify-connection.sh` check 5. NOTE: ssh's exit code is NOT a valid signal here — a forced command always exits with the agent's code (0 on EOF), so "non-zero exit" is the wrong expectation, and run with piped stdin only (a TTY makes the agent block).
 
 ## TC-SSH-002: Port forwarding refused
-**Acceptance:** `ssh -i <key> -L 9999:localhost:9999 <host>` fails — forwarding is refused.
+**Acceptance:** A `-L` forward requested on the agent key is unusable — nothing is tunnelled to the server loopback.
 **Steps:**
-1. `ssh -i ~/.ssh/supabase-agent-<host> -L 9999:localhost:9999 -fN <alias>` (or without `-fN`).
-**Expected:** Fails. The `no-port-forwarding` restriction in authorized_keys blocks it.
+1. During a live agent session open `-L <lport>:127.0.0.1:3001`, then connect to the local listen port and send a probe:
+   `printf 'GET / HTTP/1.0\r\n\r\n' | nc -w 2 127.0.0.1 <lport>`
+**Expected:** The local connection is dropped — no bytes reach Studio (`no-port-forwarding` refuses the direct-tcpip channel). Auto-checked by `verify-connection.sh` check 6 (requires `nc`). Same exit-code caveat as TC-SSH-001.
 
 ## TC-SSH-003: MCP byte test
 **Acceptance:** Piping an MCP `initialize` into `ssh <alias> supabase-agent` returns a stream whose first byte is `{`. Distro-agnostic.
