@@ -328,25 +328,29 @@ jobs:
             /etc/pgbackrest/pgbackrest.conf /usr/bin/pgbackrest 2>&1 || true
           echo "::endgroup::"
 
-          # pg_stat_archiver keeps no error text, so reproduce the failure
-          # directly and let pgbackrest say why.
-          echo "::group::archive-push reproduced as postgres"
-          wal=$(sudo docker exec supabase-db sh -c \
-            'ls /var/lib/postgresql/data/pg_wal/ 2>/dev/null | grep -E "^[0-9A-F]{24}$" | head -1' 2>/dev/null || true)
-          if [ -n "$wal" ]; then
-            echo "segment: $wal"
-            # Replay as the uid that owns PGDATA — the account the postmaster
-            # runs archive_command as — rather than as a name that may not exist.
-            pg_uid=$(sudo docker exec supabase-db stat -c '%u' /var/lib/postgresql/data 2>/dev/null || echo 0)
-            echo "replaying as uid ${pg_uid}"
-            # Short on purpose: it is known to hang, and the log files dumped
-            # below say more than another minute of silence would.
-            sudo timeout 25 docker exec -u "$pg_uid" supabase-db \
-              pgbackrest --stanza=main --log-level-console=detail \
-              archive-push "/var/lib/postgresql/data/pg_wal/${wal}" 2>&1 || true
-          else
-            echo "(no WAL segment found to retry)"
-          fi
+          # archived_count and failed_count both at 0 means the archiver never
+          # even attempted the segment — a failing archive_command would raise
+          # failed_count. archive_status is where PostgreSQL records that: a
+          # .ready file means the segment is queued and nothing is collecting
+          # it; a .done means it was archived; neither means the segment was
+          # never completed.
+          echo "::group::WAL archive_status (queued vs done)"
+          sudo docker exec supabase-db sh -c \
+            'ls -l /var/lib/postgresql/data/pg_wal/archive_status/ 2>&1 | head -20;
+             echo "--- segments ---";
+             ls /var/lib/postgresql/data/pg_wal/ 2>/dev/null | head -10' 2>&1 || true
+          echo "::endgroup::"
+
+          # PostgreSQL logs to /var/log/postgresql, a mounted volume, not to
+          # stdout — which is why every `docker logs | grep archive` in these
+          # diagnostics has come back empty. This is where "archive command
+          # failed" would actually appear.
+          echo "::group::PostgreSQL's own log files"
+          sudo docker exec supabase-db sh -c \
+            'for f in /var/log/postgresql/*; do
+               [ -f "$f" ] || continue
+               echo "──────── $f"; tail -40 "$f"
+             done' 2>&1 || echo "(no files under /var/log/postgresql)"
           echo "::endgroup::"
 
           # pgbackrest logs to files under --log-path, not to stdout, so the
