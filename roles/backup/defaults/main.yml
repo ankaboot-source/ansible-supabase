@@ -56,8 +56,16 @@ backup_cron_dir: "/etc/cron.d"
 backup_log_dir: "/var/log/supabase-backup"
 
 # --- pgBackRest container settings ---
-pgbackrest_uid: 2001
-pgbackrest_gid: 2001
+# These must match the owner of PGDATA in the db image, because the exporter
+# and PostgreSQL share ./volumes/pgbackrest as a lock directory. They were 2001
+# — the uid baked into the woblerr images — and were never referenced anywhere,
+# so the exporter ran as its image default and its entrypoint re-chowned the
+# shared directory to 2001:2001. PostgreSQL, running as 100, then could not
+# create /var/lib/pgbackrest/lock/*.lock and every archive-push failed with
+# "[050]: unable to acquire lock ... Permission denied", while stanza-create and
+# backup kept working because those run through docker exec as root.
+pgbackrest_uid: 100
+pgbackrest_gid: 101
 pgbackrest_conf_path: "/etc/pgbackrest"
 pgbackrest_repo_path: "/var/lib/pgbackrest"
 pgbackrest_log_path: "/var/log/pgbackrest"

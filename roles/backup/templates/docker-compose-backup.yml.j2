@@ -49,6 +49,10 @@ services:
     image: {{ pgbackrest_exporter_image }}
     container_name: supabase-pgbackrest-exporter{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     restart: unless-stopped
+    # Pin to the identity PostgreSQL uses. Without this the image's own uid
+    # wins, its entrypoint re-chowns the shared lock directory, and archive-push
+    # loses the ability to lock.
+    user: "{{ pgbackrest_uid }}:{{ pgbackrest_gid }}"
     environment:
       TZ: {{ timezone | default('UTC') }}
       PGBACKREST_STANZA: {{ backup_stanza_name }}
