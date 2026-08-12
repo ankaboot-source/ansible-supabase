@@ -1,0 +1,259 @@
+---
+# The full sweep. Everything the PR gate deliberately skips runs here.
+#
+# Three triggers, one suite:
+#
+#   release    — the gate that blocks shipping a version
+#   schedule   — weekly, because roles/supabase clones the *latest* upstream
+#                Supabase release. This stack can break with nobody touching
+#                this repo, and a weekly run is the only thing that catches
+#                that before a user does.
+#   dispatch   — run it by hand when you want to.
+#
+# Runner coverage is Ubuntu-only: GitHub-hosted runners do not offer Debian or
+# Arch images. The README claims those as supported targets, and nothing here
+# proves it — covering them needs a self-hosted runner or a VM provider.
+
+name: Release
+
+on:
+  release:
+    types: [published]
+  schedule:
+    - cron: '0 4 * * 1'     # Mondays, 04:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Full deployment with every component the runner can host, on both
+  # supported Ubuntu versions.
+  # ───────────────────────────────────────────────────────────────────────────
+  full-stack:
+    name: Full stack (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Install asciinema
+        run: pipx install asciinema || pip install --quiet asciinema
+
+      # Unlike the PR gate, this turns on monitoring and fail2ban too. Caddy
+      # stays off (Let's Encrypt needs public DNS) and UFW stays off (the job
+      # would firewall itself).
+      - name: Write config.yml
+        run: |
+          cat > config.yml <<'YAML'
+          required:
+            deploy_user: runner
+            site_url: https://app.ci.invalid
+            api_external_url: https://sb.ci.invalid
+            supabase_domain: sb.ci.invalid
+            smtp_admin_email: ci@ci.invalid
+            smtp_host: smtp.ci.invalid
+            smtp_user: ci@ci.invalid
+            smtp_password: ci-not-a-real-password
+
+          secrets:
+            generate: true
+
+          components:
+            caddy: false
+            monitor: true
+            fail2ban: true
+            backup: true
+            ufw: false
+            luks: false
+
+          advanced:
+            backup:
+              repo_type: minio
+          YAML
+
+      # Recorded rather than run plainly: the deploy is the demo. `-i 2` caps
+      # idle gaps at two seconds, which turns a ten-minute install into
+      # something a reader will actually watch.
+      - name: Deploy (recorded)
+        run: |
+          asciinema rec install.cast \
+            --overwrite -i 2 \
+            --title "supabase-selfhost-ops — one-command install" \
+            -c "sudo bash setup.sh --yes"
+
+      - name: Wait for containers to become healthy
+        run: |
+          for i in $(seq 1 90); do
+            unhealthy=$(sudo docker ps --format '{{.Names}}\t{{.Status}}' \
+              | grep -c 'unhealthy\|starting' || true)
+            if [ "$unhealthy" -eq 0 ]; then
+              echo "All containers settled after ${i}0s."
+              sudo docker ps --format '{{.Names}}\t{{.Status}}'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Containers did not become healthy within 15 minutes."
+          sudo docker ps --format '{{.Names}}\t{{.Status}}'
+          exit 1
+
+      - name: Smoke test the API gateway
+        run: |
+          anon_key=$(sudo grep -oP '^sb_anon_key:\s*\K\S+' env/supabase.yml)
+          curl -fsS -H "apikey: ${anon_key}" http://localhost:8000/rest/v1/ > /dev/null
+          echo "Kong routed a REST request successfully."
+
+      - name: Smoke test Grafana
+        run: |
+          curl -fsS http://localhost:3002/api/health | tee /dev/stderr | grep -q '"database"'
+
+      - name: On-demand backup
+        run: sudo ansible-playbook -i localhost, -c local backup.yml -e @env/supabase.yml
+
+      - name: Restore drill (non-destructive)
+        run: |
+          sudo ansible-playbook -i localhost, -c local restore-verify.yml \
+            -e @env/supabase.yml
+
+      - name: Record the upstream Supabase release under test
+        run: |
+          ref=$(sudo git -C /home/runner/supabase describe --tags 2>/dev/null \
+            || sudo git -C /home/runner/supabase rev-parse --short HEAD 2>/dev/null \
+            || echo unknown)
+          echo "Supabase upstream under test: ${ref}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the recording
+        if: matrix.os == 'ubuntu-24.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-cast
+          path: install.cast
+
+      - name: Container logs on failure
+        if: failure()
+        run: |
+          sudo docker ps -a --format '{{.Names}}\t{{.Status}}'
+          for c in $(sudo docker ps -aq); do
+            echo "──────── $(sudo docker inspect --format '{{.Name}}' "$c")"
+            sudo docker logs --tail 80 "$c" 2>&1 || true
+          done
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # LUKS against a loopback device. Advisory for now: the role is exercised
+  # here for the first time, and a harness problem should not block a release.
+  # Drop continue-on-error once this has passed once.
+  # ───────────────────────────────────────────────────────────────────────────
+  luks:
+    name: LUKS (loopback device)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create a loopback block device
+        run: |
+          sudo fallocate -l 2G /tmp/luks.img
+          echo "LUKS_DEV=$(sudo losetup --find --show /tmp/luks.img)" >> "$GITHUB_ENV"
+
+      - name: Write config.yml
+        run: |
+          cat > config.yml <<YAML
+          required:
+            deploy_user: runner
+            site_url: https://app.ci.invalid
+            api_external_url: https://sb.ci.invalid
+            supabase_domain: sb.ci.invalid
+            smtp_admin_email: ci@ci.invalid
+            smtp_host: smtp.ci.invalid
+            smtp_user: ci@ci.invalid
+            smtp_password: ci-not-a-real-password
+
+          secrets:
+            generate: true
+
+          components:
+            caddy: false
+            monitor: false
+            fail2ban: false
+            backup: false
+            ufw: false
+            luks: true
+
+          advanced:
+            luks:
+              device: ${LUKS_DEV}
+              mount_point: /data
+          YAML
+
+      - name: Deploy with LUKS enabled
+        run: sudo bash setup.sh --yes
+
+      - name: Assert the volume is encrypted and mounted
+        run: |
+          sudo cryptsetup status "$(basename "${LUKS_DEV}")" || true
+          mountpoint -q /data && echo "/data is mounted."
+          sudo blkid "${LUKS_DEV}" | grep -q crypto_LUKS
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Turn the recorded install into an animated SVG and commit it, so the
+  # README demo is a byproduct of a passing release rather than a staged clip.
+  # Release only — the weekly run should not rewrite the repo.
+  # ───────────────────────────────────────────────────────────────────────────
+  publish-demo:
+    name: Publish install demo
+    needs: full-stack
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: install-cast
+
+      - name: Render to animated SVG
+        run: |
+          mkdir -p docs/assets
+          npx --yes svg-term-cli \
+            --in install.cast \
+            --out docs/assets/install.svg \
+            --window --width 100 --height 30
+
+      - name: Commit if it changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/assets/install.svg
+          if git diff --cached --quiet; then
+            echo "Demo unchanged."
+          else
+            git commit -m "docs(demo): refresh install recording from ${GITHUB_REF_NAME}"
+            git push
+          fi

@@ -67,7 +67,7 @@ component, or rebuild the box — not a one-shot script you can never run twice.
 
 ### Prerequisites
 
-- A **Debian 12, Ubuntu 22.04/24.04, or Arch Linux server** with root or sudo access (see the [server support matrix](#server-support-matrix) above)
+- A **Debian 12, Ubuntu 22.04/24.04, or Arch Linux server** with root or sudo access
 - A **domain** with three DNS A records pointing to your server:
   - `sb.example.com` — Supabase dashboard + API
   - `auth.example.com` — OAuth2 authentication endpoint
