@@ -33,7 +33,9 @@ Each role follows Ansible convention:
 Installs Docker Engine (official APT repo), `docker-compose-plugin`, and adds `deploy_user` to the `docker` group. Always runs first as a prerequisite.
 
 ### Role: supabase
-Clones the official Supabase repo, renders the Docker Compose stack, configures Kong (API gateway), sets up SSL certs (from Caddy or self-signed), and starts all Supabase services (Postgres, GoTrue, PostgREST, Realtime, Storage, Edge Functions, Studio, etc.). Four templates: `docker-compose-supabase.yml.j2`, `kong-supabase.yml.j2`, `env-supabase.j2`, `start-supabase.sh.j2`.
+Clones the official Supabase repo, renders the Docker Compose stack, configures Kong (API gateway), sets up SSL certs (from Caddy or self-signed), and starts all Supabase services (Postgres, GoTrue, PostgREST, Realtime, Storage, Edge Functions, Studio, etc.). Six templates: `docker-compose-supabase.yml.j2`, `docker-compose-logs.yml.j2` (Logflare + Vector log-drain override, see below), `vector-logs.yml.j2` (<supabase_path>/volumes/logs/vector.yml — Vector pipeline that routes container logs to Logflare, container names templated with the `deploy_env` suffix), `kong-supabase.yml.j2`, `env-supabase.j2`, `start-supabase.sh.j2`.
+
+The **log drain** (Studio dashboard logging) is a separate compose override: `docker-compose-logs.yml` (analytics/Logflare + vector). It ships in the repo always, but `start-supabase.sh` only boots it when `log_drain_enabled: true` (rendered by setup.sh from `required.enable_logging`, default `true` — set it `false` to disable log drain). The file is always rendered so `down` tears down orphaned analytics/vector when the drain is disabled.
 
 ### Role: caddy
 Reverse proxy + automatic TLS + SSO. Four provider templates in `templates/`:
@@ -65,7 +67,7 @@ Most agents default to treating Supabase like the SaaS cloud product. This repo 
 
 ### Context & Stack Architecture
 - **Topology**: PostgreSQL and all Supabase services (GoTrue, PostgREST, Realtime, Storage, Edge Functions, Studio, Kong, Supavisor) run in Docker Compose on a single host. Caddy runs as a **native systemd service** (apt package, not a container) and acts as the reverse proxy + automatic TLS + OAuth2 SSO gateway (GitHub/GitLab/Generic/Discord).
-- **Monitoring**: Observability is a separate Docker Compose stack — Prometheus, Loki, Grafana, cAdvisor, Node Exporter, Postgres Exporter, Promtail. Logflare/Analytics is **disabled** in self-hosted builds (Kong routes for `/analytics/v1/*` are commented out), so the Studio UI logs pane is empty by design.
+- **Monitoring**: Observability is a separate Docker Compose stack — Prometheus, Loki, Grafana, cAdvisor, Node Exporter, Postgres Exporter, Promtail. Logflare/Analytics is opt-in via `required.enable_logging` (default `true`); when disabled, Kong routes for `/analytics/v1/*` stay commented out and the Studio UI logs pane is empty.
 - **Database**: PostgreSQL is bound to `127.0.0.1:5432` only — it is **never exposed to the public internet**. The Supavisor pooler is bound to `127.0.0.1:6543`. Both are reachable from the host loopback, not from outside.
 
 ### Where Things Live on the Host
@@ -88,7 +90,7 @@ Most agents default to treating Supabase like the SaaS cloud product. This repo 
 3. **Port routing**:
    - **Migrations / direct DDL**: Use the direct Postgres port `5432` (via `docker exec supabase-db psql ...` or the loopback-bound listener). Never run migrations through the pooler.
    - **App queries / TS typegen**: Use the Supavisor pooler port `6543` (transaction mode).
-4. **Logs & monitoring**: Do not use the Studio UI for logs (Logflare is disabled). Use `docker logs --tail 100 <container>` or Grafana/Loki/Promtail.
+4. **Logs & monitoring**: The Studio UI logs pane works only when the log drain is enabled (`required.enable_logging: true` default). Otherwise use `docker logs --tail 100 <container>` or Grafana/Loki/Promtail.
 5. **Caddy is a systemd service, not a container.** Inspect Caddy/SSO logs with `journalctl -u caddy -n 100 --no-pager`, not `docker logs caddy`. Restart with `systemctl restart caddy`, not `docker restart caddy`.
 
 ### 🚀 Standard Operating Recipes
@@ -143,7 +145,7 @@ Use the direct port (`5432`), not the pooler.
 | `401 Unauthorized` on Studio/Grafana | Caddy SSO session expired or OAuth callback URL misconfigured | `journalctl -u caddy -n 100 --no-pager`; verify `API_EXTERNAL_URL` / `SITE_URL` in the rendered `.env` |
 | PostgREST doesn't see new tables | PostgREST schema cache out of sync | `docker compose restart rest` (container `supabase-rest`) |
 | Migration hangs or fails | Migration ran through the Supavisor pooler (`6543`) | Re-run pointing strictly at the **direct** port `5432` (`docker exec supabase-db psql ...`) |
-| Empty logs in Studio UI | Logflare/Analytics is disabled in self-hosted builds | Use `docker logs --tail 100 <container>` or Grafana/Loki |
+| Empty logs in Studio UI | Log drain disabled (`required.enable_logging: false`) or analytics still starting | Verify `log_drain_enabled` in env/supabase.yml; else use `docker logs --tail 100 <container>` or Grafana/Loki |
 | `403 {"message":"IP address not allowed: ..."}` on `/mcp` | Docker NATs host-originated traffic to the bridge gateway IP; the `ip-restriction` allow list must include the pinned subnet gateway (`172.28.0.1`) | See **MCP / Docker networking** pitfalls below; update `mcp_allowed_ips` to match the pinned subnet gateway |
 | Kong fails to start after a route/plugin edit | A malformed plugin (e.g. `ip-restriction` with a YAML flow-list bug) breaks the startup healthcheck | Test on a staging route first; keep risky config commented until the runtime rejection is understood (see Kong pitfall below) |
 | Edge Function returns `404` or serves stale code | Function folder not in `volumes/functions/` (`<name>/index.ts`), or edge-runtime not restarted after the copy | Copy the folder to `<supabase_path>/volumes/functions/` and `docker compose restart functions` |
@@ -158,6 +160,7 @@ These are problems encountered while building this repo, and how they were fixed
 - **`{% if %}` blocks leave stray whitespace/newlines in templated compose files** under trim_blocks. Use inline expressions instead: `{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}`.
 - **`{% for %}` block loops collapse onto one line under trim_blocks** and break YAML-only consumers. The Kong template's `ip-restriction` allow list must stay an inline expression (`allow: {{ mcp_allowed_ips }}` renders a YAML flow list) — the previous `{%- for ip in ... %}`/`{%- endfor %}` form mangled `allow:` + `deny: []` onto one line and Kong refused to start (`block sequence entries are not allowed in this context`). `verify-secure-mcp.py` renders under all `trim_blocks`/`lstrip_blocks` combos to catch this class.
 - **`docker compose up -d` does not reliably pick up config/env changes.** `start-supabase.sh` must run `down && up` for changes to take effect.
+- **Toggling the log drain requires tearing down with the override file too.** `docker compose -f docker-compose-supabase.yml down` only removes services defined in that file, so disabling the log drain (`required.enable_logging: false`) while analytics/vector are running would orphan them. `start-supabase.sh` always includes `-f docker-compose-logs.yml` in the `down` command whenever the override file exists (it is always rendered), and adds it to `up` only when `log_drain_enabled` is true.
 - **Postgres refuses to init if its log dir is inside the data dir** ("data directory exists but is not empty"). Log to `/var/log/postgresql` (host-mounted into the container), never `/var/lib/postgresql/data/log`.
 - **Mounted Postgres dirs and certs must use the image's real UID/GID** (currently 100/101 for the supabase postgres image), not guessed values.
 - **After cloning the Supabase repo as root, chown the whole tree to `deploy_user` recursively**, or the stack can't write to it.
@@ -210,7 +213,8 @@ These are problems encountered while building this repo, and how they were fixed
 - **The manifest `supabase.version` is a cosmetic default** (`manifest/defaults/main.yml` pins `sb_db: postgres:17.6.1.136` as a display string). It can drift from the real image tag in the rendered `.env` (`IMAGE_TAG`); treat it as informational, never as the deployed version.
 
 ### Supabase template sync
-- **Templates drift from upstream self-hosted releases** (e.g. postgres 15→17, removed analytics/vector, SAML routes, new healthchecks). Sync against the latest upstream compose on a regular basis.
+- **Templates drift from upstream self-hosted releases** (e.g. postgres 15→17, analytics/vector moved into a separate `docker-compose.logs.yml` override, SAML routes, new healthchecks). Sync against the latest upstream compose on a regular basis.
+- **Vector's router must match the deployed container names.** Upstream `vector.yml` matches `supabase-kong`, `supabase-auth`, etc. Our compose suffixes container names with `deploy_env`, so `vector-logs.yml.j2` templates those `.appname` values with the same `{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}` expression — except `realtime-dev.supabase-realtime`, which never gets the suffix. If container-name generation changes, update the router too or log sources go dark.
 - **Never bake project-specific changes into the default templates** (e.g. m3llm shared networks) — apply them via CI/CD overrides instead.
 
 ### Backup / pgBackRest

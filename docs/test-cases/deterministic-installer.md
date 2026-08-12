@@ -76,3 +76,14 @@ are crystal clear and separated from advanced options.
 - **Given**: `setup.sh` already ran successfully
 - **When**: `bash setup.sh` is run again with the same config
 - **Then**: completes successfully without duplicating entries or corrupting files
+
+### TC-SETUP-016: log drain enabled by default
+- **Given**: a valid `config.yml` (no `required.enable_logging` override)
+- **When**: `bash setup.sh` is run
+- **Then**: `env/supabase.yml` renders `log_drain_enabled: true`
+
+### TC-SETUP-017: enable_logging: false disables the log drain
+- **Given**: a valid `config.yml` with `required.enable_logging: false`
+- **When**: `bash setup.sh` is run
+- **Then**: `env/supabase.yml` renders `log_drain_enabled: false`, so
+  `start-supabase.sh` boots only `docker-compose-supabase.yml` (no log drain)

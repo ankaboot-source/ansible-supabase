@@ -267,6 +267,7 @@ if [[ $DRY_RUN -eq 1 ]]; then
       printf "  + %s\n" "$c"
     fi
   done
+  log "Dashboard log drain (required.enable_logging): $(cfg_get "required.enable_logging")"
   log "Would run: bash install.sh"
   ok "Dry run complete. Re-run without --dry-run to deploy."
   exit 0
@@ -312,6 +313,12 @@ set_env_var "smtp_admin_email"   "$(cfg_get "required.smtp_admin_email")"
 set_env_var "smtp_host"          "$(cfg_get "required.smtp_host")"
 set_env_var "smtp_user"          "$(cfg_get "required.smtp_user")"
 set_env_var "smtp_password"      "$(cfg_get "required.smtp_password")"
+
+# Supabase dashboard log drain (Logflare + Vector). Defaults to true when the
+# field is missing so upgraded configs keep logging.
+log_drain="$(cfg_get "required.enable_logging")"
+[[ -z "$log_drain" ]] && log_drain="true"
+set_env_var "log_drain_enabled" "$log_drain"
 
 # docker_users is a list; the template has `- changeit` under it. Replace the
 # first list item line (do NOT touch the `docker_users:` key — it must stay a list).

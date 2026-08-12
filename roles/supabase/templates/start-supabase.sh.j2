@@ -3,9 +3,18 @@ set -euo pipefail
 
 export COMPOSE_DOCKER_CLI_BUILD=1
 export DOCKER_BUILDKIT=1
-COMPOSE="docker compose -f /home/{{ deploy_user }}/{{ supabase_path }}/docker-compose-supabase.yml"
+BASE_DIR="/home/{{ deploy_user }}/{{ supabase_path }}"
 
-$COMPOSE down
+# The log drain (Logflare + Vector) ships in a separate docker-compose-logs.yml
+# override. It is started only when log_drain_enabled is true (config.yml
+# required.enable_logging). The override file is always rendered so that `down`
+# below also tears down orphaned analytics/vector containers when the drain is
+# disabled (docker compose -f base down alone would leave them running).
+COMPOSE="docker compose -f $BASE_DIR/docker-compose-supabase.yml{{ ' -f $BASE_DIR/docker-compose-logs.yml' if log_drain_enabled | default(false) | bool else '' }}"
+COMPOSE_DOWN="docker compose -f $BASE_DIR/docker-compose-supabase.yml"
+[ -f "$BASE_DIR/docker-compose-logs.yml" ] && COMPOSE_DOWN="$COMPOSE_DOWN -f $BASE_DIR/docker-compose-logs.yml"
+
+$COMPOSE_DOWN down
 $COMPOSE up -d || true
 
 echo "Waiting for Supabase services to become healthy..."
