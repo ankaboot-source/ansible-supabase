@@ -258,11 +258,57 @@ jobs:
           sudo ansible-playbook -i localhost, -c local restore-verify.yml \
             -e @env/supabase.yml
 
+      # pgbackrest is a musl binary running inside a glibc container via an
+      # explicitly-invoked loader, and PostgreSQL calls it from archive_command
+      # on every WAL segment. Two failure modes look alike from the outside —
+      # it cannot execute, or it executes and blocks on the repo — but they
+      # need opposite fixes, and only the second explains "pg_ctl: server does
+      # not shut down". The timeout below is what tells them apart.
+      - name: pgBackRest state on failure
+        if: failure()
+        run: |
+          echo "::group::what the db container actually sees"
+          sudo docker exec supabase-db sh -c \
+            'ls -l /usr/bin/pgbackrest; ls -l /usr/lib/pgbackrest-bin/ | head -25' 2>&1 || true
+          echo "::endgroup::"
+          echo "::group::does it execute, and does it return?"
+          if sudo timeout 30 docker exec supabase-db pgbackrest version 2>&1; then
+            echo "-> executes and returns"
+          else
+            rc=$?
+            [ "$rc" -eq 124 ] \
+              && echo "-> TIMED OUT: it runs but blocks. archive_command hanging explains a stuck shutdown." \
+              || echo "-> failed fast with exit ${rc}: it cannot execute."
+          fi
+          echo "::endgroup::"
+          echo "::group::archiver state"
+          sudo docker exec supabase-db psql -U supabase_admin -d postgres -Xc \
+            "select name, setting from pg_settings where name in ('archive_mode','archive_command');" 2>&1 || true
+          sudo docker exec supabase-db psql -U supabase_admin -d postgres -Xc \
+            "select archived_count, failed_count, last_failed_error from pg_stat_archiver;" 2>&1 || true
+          echo "::endgroup::"
+
       - name: Container logs on failure
         if: failure()
         run: |
           sudo docker ps -a --format '{{.Names}}\t{{.Status}}'
-          for c in $(sudo docker ps -aq); do
-            echo "──────── $(sudo docker inspect --format '{{.Name}}' "$c")"
-            sudo docker logs --tail 80 "$c" 2>&1 || true
+          # Dump the suspects first and only, in collapsed groups. Dumping 80
+          # lines for every container produced ~1200 lines in which the one
+          # useful line was unfindable — three failures were diagnosed against
+          # a log whose own diagnostics had scrolled off the top.
+          suspects="$(sudo docker ps -a --format '{{.Names}}\t{{.Status}}' \
+            | grep -Ei 'unhealthy|restarting|exited|starting' | cut -f1 || true)"
+          if [ -z "$suspects" ]; then
+            echo "No container is unhealthy, restarting or exited."
+            suspects="$(sudo docker ps -a --format '{{.Names}}')"
+            echo "Falling back to all containers, 25 lines each."
+            tail_n=25
+          else
+            echo "Containers in a bad state:"; echo "$suspects"
+            tail_n=120
+          fi
+          for c in $suspects; do
+            echo "::group::docker logs: $c (last ${tail_n})"
+            sudo docker logs --tail "$tail_n" "$c" 2>&1 | tail -n "$tail_n" || true
+            echo "::endgroup::"
           done
