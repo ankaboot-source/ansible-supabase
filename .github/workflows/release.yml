@@ -164,11 +164,16 @@ jobs:
   # here for the first time, and a harness problem should not block a release.
   # Drop continue-on-error once this has passed once.
   # ───────────────────────────────────────────────────────────────────────────
+  # Encryption at rest is a headline claim, so this job blocks the release.
+  # It was advisory while its assertions were unproven — and they were in fact
+  # broken, checking the backing device instead of the mapping behind a
+  # `|| true`. With that fixed there is no reason for it not to count. Run the
+  # workflow manually once (workflow_dispatch) before tagging if you want to
+  # see it pass on its own before it can hold a release back.
   luks:
     name: LUKS (loopback device)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -212,9 +217,222 @@ jobs:
 
       - name: Assert the volume is encrypted and mounted
         run: |
-          sudo cryptsetup status "$(basename "${LUKS_DEV}")" || true
-          mountpoint -q /data && echo "/data is mounted."
-          sudo blkid "${LUKS_DEV}" | grep -q crypto_LUKS
+          # Every line below is a real assertion. The previous version asked
+          # for the status of "$(basename $LUKS_DEV)" — i.e. loop0 — which is
+          # the backing device, not the mapping, so it could only ever fail;
+          # the `|| true` after it meant the whole check reported success
+          # regardless. The mapping is named by luks_name in env/supabase.yml.
+          luks_name="$(grep -oP '^luks_name:\s*\K\S+' env/supabase.yml)"
+          echo "Mapping under test: ${luks_name}"
+
+          sudo blkid "${LUKS_DEV}" | grep -q crypto_LUKS \
+            || { echo "::error::${LUKS_DEV} carries no LUKS header."; exit 1; }
+
+          sudo cryptsetup status "${luks_name}" \
+            || { echo "::error::No active LUKS mapping named ${luks_name}."; exit 1; }
+
+          mountpoint -q /data \
+            || { echo "::error::/data is not a mount point."; exit 1; }
+
+          # Confirms the mapping is not merely present but usable — a mounted
+          # volume that cannot be written to would satisfy every check above.
+          sudo touch /data/.ci-write-probe \
+            || { echo "::error::/data is mounted but not writable."; exit 1; }
+          sudo rm -f /data/.ci-write-probe
+          echo "/data is encrypted, mounted and writable."
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Caddy is the one component whose value is most visible to users — HTTPS on
+  # their domain, and SSO in front of Studio — and it was the least covered:
+  # every other job sets caddy: false. It also builds a Go binary from an
+  # unpinned xcaddy plus a third-party plugin at deploy time, so it can break
+  # with nobody touching this repo.
+  #
+  # "No public DNS" does not mean "no Caddy". ACME is the only part that needs
+  # a resolvable name, so certificates come from Caddy's own local CA
+  # (tls internal) and the CI domains are pointed at loopback. What that leaves
+  # untested is real ACME issuance, and a completed login round-trip — the
+  # assertion below is the negative one, which is the property that matters:
+  # an unauthenticated request must not reach Studio.
+  # ───────────────────────────────────────────────────────────────────────────
+  caddy:
+    name: Caddy (build, TLS, SSO gate)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      # caddy-security fetches OIDC discovery when it loads, so the provider has
+      # to answer for Caddy to start at all. A real IdP is not needed for that —
+      # nor for the gate assertion, which fires before any token exchange — so
+      # this serves a static discovery document rather than pinning yet another
+      # third-party image. Written with an explicit JSON content-type, which
+      # python -m http.server would not set for an extension-less file.
+      - name: Serve a minimal OIDC discovery document
+        run: |
+          mkdir -p /tmp/idp
+          cat > /tmp/idp/serve.py <<'PY'
+          import json, http.server
+          ISSUER = "http://127.0.0.1:9999"
+          DOC = {
+              "issuer": ISSUER,
+              "authorization_endpoint": ISSUER + "/authorize",
+              "token_endpoint": ISSUER + "/token",
+              "userinfo_endpoint": ISSUER + "/userinfo",
+              "jwks_uri": ISSUER + "/jwks.json",
+              "response_types_supported": ["code"],
+              "subject_types_supported": ["public"],
+              "id_token_signing_alg_values_supported": ["RS256"],
+              "scopes_supported": ["openid", "email", "profile"],
+          }
+          BODIES = {
+              "/.well-known/openid-configuration": DOC,
+              "/jwks.json": {"keys": []},
+          }
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = BODIES.get(self.path)
+                  payload = json.dumps(body or {"error": "not_found"}).encode()
+                  self.send_response(200 if body else 404)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(payload)))
+                  self.end_headers()
+                  self.wfile.write(payload)
+              def log_message(self, *a):
+                  pass
+          http.server.HTTPServer(("127.0.0.1", 9999), H).serve_forever()
+          PY
+          nohup python3 /tmp/idp/serve.py >/tmp/idp/serve.log 2>&1 &
+          for _ in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:9999/.well-known/openid-configuration >/dev/null 2>&1; then
+              echo "Discovery document is being served."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::The local OIDC discovery endpoint never came up."
+          exit 1
+
+      # Caddy must resolve its own site names to answer on them, and curl must
+      # agree — otherwise the request never reaches the site block under test.
+      - name: Point the CI domains at loopback
+        run: |
+          echo "127.0.0.1 sb.ci.invalid auth.ci.invalid app.ci.invalid" \
+            | sudo tee -a /etc/hosts
+
+      - name: Write config.yml
+        run: |
+          cat > config.yml <<'YAML'
+          required:
+            deploy_user: runner
+            site_url: https://app.ci.invalid
+            api_external_url: https://sb.ci.invalid
+            supabase_domain: sb.ci.invalid
+            smtp_admin_email: ci@ci.invalid
+            smtp_host: smtp.ci.invalid
+            smtp_user: ci@ci.invalid
+            smtp_password: ci-not-a-real-password
+
+          secrets:
+            generate: true
+
+          components:
+            caddy: true       # the point of this job
+            monitor: false
+            fail2ban: false
+            backup: false
+            ufw: false        # would firewall the runner mid-job
+            luks: false
+
+          advanced:
+            caddy:
+              sso_provider: generic
+              root_domain: ci.invalid
+              base_auth_domain: auth.ci.invalid
+              sso_client_id: ci-client
+              sso_client_secret: ci-not-a-real-secret
+              sso_allow_list: "ci@ci.invalid"
+              tls_internal: true
+              # allowed_ips deliberately omitted: the deployment must be
+              # reachable, which is also the default users get.
+          YAML
+
+      - name: Write the generic OIDC endpoints into env
+        run: |
+          sed -i 's|^base_auth_url:.*|base_auth_url: http://127.0.0.1:9999/|' env/supabase.yml
+          sed -i 's|^metadata_url:.*|metadata_url: http://127.0.0.1:9999/.well-known/openid-configuration|' env/supabase.yml
+          sed -i 's|^app_url:.*|app_url: https://sb.ci.invalid|' env/supabase.yml
+
+      - name: Deploy with Caddy enabled
+        run: sudo bash setup.sh --yes
+
+      # Proves the xcaddy build produced a working binary *and* that the
+      # rendered Caddyfile is valid for the plugin set it was built with — the
+      # two things most likely to rot silently as upstream moves.
+      - name: Caddy validates its own rendered config
+        run: |
+          caddy version
+          sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Caddy is running
+        run: |
+          systemctl is-active --quiet caddy \
+            || { sudo journalctl -u caddy --no-pager -n 80; exit 1; }
+
+      - name: Wait for Caddy to answer on TLS
+        run: |
+          root_crt="$(sudo find /var/lib/caddy -path '*pki*' -name root.crt | head -1)"
+          [ -n "$root_crt" ] || { echo "::error::Caddy's local CA root was never created."; exit 1; }
+          sudo cp "$root_crt" /tmp/caddy-root.crt
+          for _ in $(seq 1 30); do
+            if curl -sS --cacert /tmp/caddy-root.crt -o /dev/null https://sb.ci.invalid/ 2>/dev/null; then
+              echo "Caddy is terminating TLS with a certificate from its own CA."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Caddy never answered on https://sb.ci.invalid/"
+          sudo journalctl -u caddy --no-pager -n 80
+          exit 1
+
+      # The pair matters more than either half: an ungated route must work
+      # while the gated one must not. A blanket 403 would pass the second
+      # assertion on its own and prove nothing.
+      - name: An API route is reachable through Caddy
+        run: |
+          anon_key=$(sudo grep -oP '^sb_anon_key:\s*\K\S+' env/supabase.yml)
+          curl -fsS --cacert /tmp/caddy-root.crt \
+            -H "apikey: ${anon_key}" https://sb.ci.invalid/rest/v1/ > /dev/null
+          echo "Kong is reachable through Caddy over TLS."
+
+      - name: Studio is not reachable without authentication
+        run: |
+          code=$(curl -s -o /tmp/studio.out -w '%{http_code}' \
+                   --cacert /tmp/caddy-root.crt https://sb.ci.invalid/)
+          echo "Unauthenticated GET / returned ${code}."
+          case "$code" in
+            200)
+              echo "::error::Studio answered 200 to an unauthenticated request."
+              head -c 400 /tmp/studio.out
+              exit 1 ;;
+            30[0-9]|401|403)
+              echo "Studio is gated, as it should be." ;;
+            *)
+              echo "::error::Unexpected status ${code} — the gate cannot be confirmed."
+              head -c 400 /tmp/studio.out
+              exit 1 ;;
+          esac
 
   # ───────────────────────────────────────────────────────────────────────────
   # Turn the recorded install into an animated SVG and commit it, so the
