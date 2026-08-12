@@ -154,17 +154,21 @@
         docker create --name "$TMPCTR" "$IMAGE"
         mkdir -p "$BIN_DIR"
         docker cp "$TMPCTR:/usr/bin/pgbackrest" "$BIN_DIR/pgbackrest"
-        # Copy whole lib dirs from the Alpine image — docker cp takes no globs.
-        # Both are needed: the dependency .so files live in /usr/lib, but musl's
-        # loader (ld-musl-*.so.1) is a real file in /lib, and /usr/lib only
-        # carries libc.musl-*.so.1 as an absolute symlink pointing at it.
-        docker cp "$TMPCTR:/usr/lib" "$BIN_DIR/lib-alpine"
-        docker cp "$TMPCTR:/lib" "$BIN_DIR/lib-root"
+        # Copy whole lib dirs — docker cp takes no globs. Several are needed
+        # because the layout differs by distro: Alpine keeps dependencies in
+        # /usr/lib but the musl loader is a real file in /lib, while Debian
+        # multiarch puts nearly everything under /usr/lib/x86_64-linux-gnu and
+        # the glibc loader in /lib64. Missing dirs are not an error — the image
+        # only has the ones its distro uses.
+        for d in /usr/lib /lib /lib64 /usr/lib/x86_64-linux-gnu; do
+          docker cp "$TMPCTR:$d" "$BIN_DIR/src$(echo "$d" | tr / _)" 2>/dev/null || true
+        done
         # Move only the libs pgbackrest needs into the flat BIN_DIR. -L resolves
         # symlinks into real files, since anything left pointing at an absolute
         # in-image path dangles once it is outside the image.
-        for lib in libbz2.so libcrypto.so libcurl.so libgcrypt.so libgpg-error.so libhistory.so libintl.so libjson-c.so liblz4.so liblzma.so libpcre2.so libpq.so libprotobuf-c.so libssh2.so libssl.so libxml2.so libz.so libzstd.so libc.musl ld-musl; do
-          for src in "$BIN_DIR/lib-root" "$BIN_DIR/lib-alpine"; do
+        for lib in libbz2.so libcrypto.so libcurl.so libgcrypt.so libgpg-error.so libhistory.so libintl.so libjson-c.so liblz4.so liblzma.so libpcre2.so libpq.so libprotobuf-c.so libssh2.so libssl.so libxml2.so libz.so libzstd.so libc.musl ld-musl ld-linux-x86-64; do
+          for src in "$BIN_DIR"/src_*; do
+            [ -d "$src" ] || continue
             cp -L "$src/${lib}"* "$BIN_DIR/" 2>/dev/null || true
           done
         done
@@ -176,7 +180,7 @@
           libc="$BIN_DIR/libc.musl-${ld##*/ld-musl-}"
           [ -f "$libc" ] || cp "$ld" "$libc"
         done
-        rm -rf "$BIN_DIR/lib-alpine" "$BIN_DIR/lib-root"
+        rm -rf "$BIN_DIR"/src_*
         docker rm "$TMPCTR"
         chmod 755 "$BIN_DIR/pgbackrest"
         chown -R root:root "$BIN_DIR"
@@ -188,10 +192,26 @@
         echo "ERROR: pgbackrest binary not found in $BIN_DIR" >&2
         exit 1
       fi
+      # Which libc did the image use? Everything downstream differs, so detect
+      # it rather than assume: an Alpine image yields ld-musl-*.so.1, a glibc
+      # one does not. This is what lets pgbackrest_image be switched between
+      # variants without touching the role.
+      ld_musl=""
+      for f in "$BIN_DIR"/ld-musl-*.so.1; do
+        [ -f "$f" ] && { ld_musl="$f"; break; }
+      done
+
       missing=""
-      for lib in libpq.so libxml2.so libssl.so libcrypto.so liblz4.so libz.so libzstd.so ld-musl libc.musl; do
+      for lib in libpq.so libxml2.so libssl.so libcrypto.so liblz4.so libz.so libzstd.so; do
         ls "$BIN_DIR/${lib}"* >/dev/null 2>&1 || missing="$missing $lib"
       done
+      # The loader and the C library are only ours to ship in the musl case.
+      # A glibc build uses the db container's own, which is already there.
+      if [ -n "$ld_musl" ]; then
+        for lib in ld-musl libc.musl; do
+          ls "$BIN_DIR/${lib}"* >/dev/null 2>&1 || missing="$missing $lib"
+        done
+      fi
       if [ -n "$missing" ]; then
         echo "ERROR: missing shared libraries:$missing" >&2
         exit 1
@@ -199,26 +219,27 @@
 
       # Create the wrapper that the db container sees as /usr/bin/pgbackrest.
       #
-      # pgbackrest is lifted out of an Alpine image, so it is musl-linked and
-      # its ELF interpreter is /lib/ld-musl-*.so.1 — a path that does not exist
-      # inside the Debian-based db container. LD_LIBRARY_PATH cannot fix that:
-      # the kernel loads PT_INTERP verbatim before any environment is consulted,
-      # so exec'ing the binary directly fails with ENOENT whatever the env says.
-      # Invoke the extracted loader explicitly and let it resolve the rest via
-      # --library-path, which also keeps PostgreSQL's own libraries untouched.
-      ld_name=""
-      for ld in "$BIN_DIR"/ld-musl-*.so.1; do
-        [ -f "$ld" ] || continue
-        ld_name="${ld##*/}"
-        break
-      done
-      if [ -z "$ld_name" ]; then
-        echo "ERROR: no musl loader in $BIN_DIR to build the wrapper with" >&2
-        exit 1
+      # The db container is glibc, so the two cases are not symmetric.
+      if [ -n "$ld_musl" ]; then
+        # musl build. Its ELF interpreter is /lib/ld-musl-*.so.1, a path that
+        # does not exist in the db container, and LD_LIBRARY_PATH cannot help:
+        # the kernel loads PT_INTERP verbatim before any environment is
+        # consulted, so a plain exec fails with ENOENT whatever the env says.
+        # Invoke the extracted loader explicitly and let it resolve the rest.
+        ld_name="${ld_musl##*/}"
+        chmod 755 "$ld_musl"
+        printf '#!/bin/sh\nexec /usr/lib/pgbackrest-bin/%s --library-path /usr/lib/pgbackrest-bin /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' \
+          "$ld_name" > "$BACKUP_DIR/pgbackrest-wrapper"
+        echo "pgbackrest is musl-linked; the wrapper invokes ${ld_name} explicitly."
+      else
+        # glibc build. Its interpreter (/lib64/ld-linux-x86-64.so.2) is already
+        # present in the db container, so a plain exec works and LD_LIBRARY_PATH
+        # is enough to prefer our copies. Scoped to this wrapper rather than the
+        # container environment, which would poison PostgreSQL's own libraries.
+        printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/usr/lib/pgbackrest-bin\nexec /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' \
+          > "$BACKUP_DIR/pgbackrest-wrapper"
+        echo "pgbackrest is glibc-linked; the wrapper uses the container's own loader."
       fi
-      chmod 755 "$BIN_DIR/$ld_name"
-      printf '#!/bin/sh\nexec /usr/lib/pgbackrest-bin/%s --library-path /usr/lib/pgbackrest-bin /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' \
-        "$ld_name" > "$BACKUP_DIR/pgbackrest-wrapper"
       chmod 755 "$BACKUP_DIR/pgbackrest-wrapper"
 
       # Ensure pgbackrest.conf placeholder exists (backup role renders the real config)

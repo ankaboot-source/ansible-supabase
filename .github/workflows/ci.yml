@@ -198,6 +198,29 @@ jobs:
               repo_type: minio
           YAML
 
+      # pgbackrest runs *inside* supabase-db, which is glibc, so the libc of the
+      # image it is extracted from decides whether the wrapper needs to invoke a
+      # loader by hand. Sourcing a glibc build would delete that whole class of
+      # problem — two bugs came out of it in one day. Which variants exist and
+      # what they link against cannot be checked from behind a proxy that blocks
+      # the registry, so it is recorded here on every run.
+      - name: Report the pgBackRest image variants
+        run: |
+          for tag in 2.58.0 2.58.0-alpine; do
+            img="woblerr/pgbackrest:${tag}"
+            if ! sudo docker pull -q "$img" >/dev/null 2>&1; then
+              echo "${img}: not published"
+              continue
+            fi
+            cid=$(sudo docker create "$img")
+            sudo docker cp "$cid:/usr/bin/pgbackrest" /tmp/pgb-probe 2>/dev/null || true
+            sudo docker rm "$cid" >/dev/null
+            interp=$(readelf -l /tmp/pgb-probe 2>/dev/null \
+              | sed -n 's/.*interpreter: \(.*\)\]/\1/p')
+            echo "${img}: interpreter=${interp:-unknown}"
+            sudo rm -f /tmp/pgb-probe
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Deploy
         run: sudo bash setup.sh --yes
 
