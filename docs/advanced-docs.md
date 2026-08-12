@@ -17,7 +17,7 @@ This document covers all optional roles and advanced configuration beyond the mi
   - [Grafana Authentication](#grafana-authentication)
   - [Alerting & SMTP](#alerting--smtp)
 - [LUKS Disk Encryption](#luks-disk-encryption)
-- [S3 Backups](#s3-backups)
+- [Backups (pgBackRest)](#backups-pgbackrest)
 - [Fail2ban](#fail2ban)
 - [UFW Firewall](#ufw-firewall)
 - [Secure MCP Remote Access](#secure-mcp-remote-access)

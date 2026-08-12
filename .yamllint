@@ -1,0 +1,52 @@
+---
+# yamllint configuration.
+#
+# Philosophy: fail the build on things that are bugs or that break tooling
+# (duplicate keys, unparseable syntax, missing EOF newline). Report style
+# preferences as warnings so they never block a merge.
+
+extends: default
+
+ignore: |
+  .github/
+  env/supabase.yml
+
+rules:
+  # Ansible task files and Jinja expressions routinely exceed 80 columns.
+  line-length:
+    max: 160
+    level: warning
+
+  # A duplicate key silently discards one of the two values. Always an error.
+  key-duplicates: enable
+
+  truthy:
+    level: warning
+    allowed-values: ["true", "false", "yes", "no"]
+
+  indentation:
+    level: warning
+    spaces: consistent
+    indent-sequences: consistent
+
+  comments:
+    level: warning
+    min-spaces-from-content: 1
+
+  comments-indentation: disable
+
+  braces:
+    level: warning
+    max-spaces-inside: 1
+
+  brackets:
+    level: warning
+    max-spaces-inside: 1
+
+  empty-lines:
+    level: warning
+    max: 2
+
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: false
