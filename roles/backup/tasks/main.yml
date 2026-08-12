@@ -243,10 +243,20 @@
       {% else %}
       {{ stanza_create_result.stderr or stanza_create_result.stdout or 'unknown error' }}
       {% endif %}
+  # Both branches must be covered. This used to fire only when a MinIO reset
+  # had happened, so a first stanza-create that failed on its own — the common
+  # case, and the one that just hid an S3 404 for several runs — sailed past
+  # the guard because stanza-create carries failed_when: false. The failure
+  # then surfaced far downstream as "[103] archive.info missing", pointing at
+  # archiving rather than at the stanza that was never created.
   when: >
     (backup_clean_result is changed
      and stanza_create_retry.rc | default(0) != 0
      and 'already exists' not in (stanza_create_retry.stdout | default('')))
+    or
+    (backup_clean_result is not changed
+     and stanza_create_result.rc | default(0) != 0
+     and 'already exists' not in (stanza_create_result.stdout | default('')))
     or
     (backup_clean_result is not changed
      and stanza_create_result.rc | default(0) != 0

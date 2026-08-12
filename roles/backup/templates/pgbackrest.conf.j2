@@ -4,7 +4,13 @@
 [global]
 # Repository settings
 repo1-type={{ backup_repo_type if backup_repo_type != 'minio' else 's3' }}
-repo1-path=/{{ minio_bucket_name if backup_repo_type == 'minio' else 'pgbackrest' }}
+# A path *inside* the bucket, never the bucket name. It used to be set to
+# minio_bucket_name, which put the bucket name in the object keys a second
+# time — pgbackrest then listed
+#   GET /supabase-backups/?prefix=supabase-backups/archive/main/
+# and MinIO answered 404, so stanza-create never produced archive.info and
+# every archive-push failed with "[103]: unable to find a valid repository".
+repo1-path=/pgbackrest
 {% if backup_repo_type == 'minio' %}
 # Local MinIO (S3-compatible)
 repo1-s3-bucket={{ minio_bucket_name }}
