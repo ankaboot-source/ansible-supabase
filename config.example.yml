@@ -41,6 +41,10 @@ required:
   smtp_user: changeit             # e.g. user@example.com
   smtp_password: changeit         # SMTP password
 
+  # Supabase dashboard logging (log drain via Logflare + Vector).
+  # Set to false if you don't want Supabase log drain logging inside the dashboard.
+  enable_logging: true
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECRETS  —  Cryptographic keys for Supabase internals.

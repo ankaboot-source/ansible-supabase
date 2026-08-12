@@ -400,6 +400,33 @@ else
   echo "$OUT" | tail -20
 fi
 
+# ─── TC-SETUP-016: log drain enabled by default (required.enable_logging) ─────
+echo "TC-SETUP-016: log drain enabled by default"
+d="$(make_sandbox tc016)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+run_setup_rc "$d" --yes
+if [[ $RC -eq 0 ]] && grep -q "^log_drain_enabled: true" "$d/env/supabase.yml"; then
+  ok "default config renders log_drain_enabled: true"
+else
+  fail "default config did not render log_drain_enabled: true (rc=$RC)"
+  grep -n "log_drain_enabled" "$d/env/supabase.yml" || echo "  (key missing)"
+fi
+
+# ─── TC-SETUP-017: enable_logging: false disables the log drain ───────────────
+echo "TC-SETUP-017: enable_logging: false disables log drain"
+d="$(make_sandbox tc017)"
+cp "$d/config.example.yml" "$d/config.yml"
+fill_required "$d"
+sed -i 's|enable_logging: true|enable_logging: false|' "$d/config.yml"
+run_setup_rc "$d" --yes
+if [[ $RC -eq 0 ]] && grep -q "^log_drain_enabled: false" "$d/env/supabase.yml"; then
+  ok "enable_logging: false renders log_drain_enabled: false"
+else
+  fail "enable_logging: false did not render log_drain_enabled: false (rc=$RC)"
+  grep -n "log_drain_enabled" "$d/env/supabase.yml" || echo "  (key missing)"
+fi
+
 # ─── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

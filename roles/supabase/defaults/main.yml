@@ -11,6 +11,8 @@ sb_meta_version: supabase/postgres-meta:v0.96.6
 sb_functions_version: supabase/edge-runtime:v1.74.0
 sb_db_version: supabase/postgres:17.6.1.136
 sb_supavisor_version: supabase/supavisor:2.9.5
+sb_logflare_version: supabase/logflare:1.43.1
+sb_vector_version: timberio/vector:0.53.0-alpine
 caddy_cert_base_path: "/home/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory"
 postgres_cert_path: "/opt/postgres-certs"
 
