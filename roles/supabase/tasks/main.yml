@@ -141,7 +141,7 @@
       IMAGE="{{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}"
 
       # Remove Docker-created dirs that shadow our bind-mount sources
-      for p in /usr/bin/pgbackrest "$BIN_DIR/pgbackrest" "$BIN_DIR"/lib*; do
+      for p in /usr/bin/pgbackrest "$BIN_DIR/pgbackrest" "$BIN_DIR"/lib* "$BIN_DIR"/ld-musl*; do
         [ -e "$p" ] || continue
         [ -d "$p" ] && rm -rf "$p" || rm -f "$p"
       done
@@ -154,17 +154,33 @@
         docker create --name "$TMPCTR" "$IMAGE"
         mkdir -p "$BIN_DIR"
         docker cp "$TMPCTR:/usr/bin/pgbackrest" "$BIN_DIR/pgbackrest"
-        # Copy entire /usr/lib from Alpine image — docker cp doesn't support globs
+        # Copy whole lib dirs from the Alpine image — docker cp takes no globs.
+        # Both are needed: the dependency .so files live in /usr/lib, but musl's
+        # loader (ld-musl-*.so.1) is a real file in /lib, and /usr/lib only
+        # carries libc.musl-*.so.1 as an absolute symlink pointing at it.
         docker cp "$TMPCTR:/usr/lib" "$BIN_DIR/lib-alpine"
-        # Move only the libs pgbackrest needs into the flat BIN_DIR
+        docker cp "$TMPCTR:/lib" "$BIN_DIR/lib-root"
+        # Move only the libs pgbackrest needs into the flat BIN_DIR. -L resolves
+        # symlinks into real files, since anything left pointing at an absolute
+        # in-image path dangles once it is outside the image.
         for lib in libbz2.so libcrypto.so libcurl.so libgcrypt.so libgpg-error.so libhistory.so libintl.so libjson-c.so liblz4.so liblzma.so libpcre2.so libpq.so libprotobuf-c.so libssh2.so libssl.so libxml2.so libz.so libzstd.so libc.musl ld-musl; do
-          cp "$BIN_DIR/lib-alpine/${lib}"* "$BIN_DIR/" 2>/dev/null || true
+          for src in "$BIN_DIR/lib-root" "$BIN_DIR/lib-alpine"; do
+            cp -L "$src/${lib}"* "$BIN_DIR/" 2>/dev/null || true
+          done
         done
-        rm -rf "$BIN_DIR/lib-alpine"
+        # On musl the loader *is* the C library — one file under two names. The
+        # libc.musl-* symlink cannot survive the copy, so materialise it from
+        # the loader we now hold as a real file.
+        for ld in "$BIN_DIR"/ld-musl-*.so.1; do
+          [ -f "$ld" ] || continue
+          libc="$BIN_DIR/libc.musl-${ld##*/ld-musl-}"
+          [ -f "$libc" ] || cp "$ld" "$libc"
+        done
+        rm -rf "$BIN_DIR/lib-alpine" "$BIN_DIR/lib-root"
         docker rm "$TMPCTR"
         chmod 755 "$BIN_DIR/pgbackrest"
         chown -R root:root "$BIN_DIR"
-        echo "Extracted pgbackrest binary and $(ls "$BIN_DIR"/lib* 2>/dev/null | wc -l) shared libraries"
+        echo "Extracted pgbackrest binary and $(ls "$BIN_DIR"/*.so* 2>/dev/null | wc -l) shared libraries"
       fi
 
       # Verify extraction succeeded
@@ -173,7 +189,7 @@
         exit 1
       fi
       missing=""
-      for lib in libpq.so libxml2.so libssl.so libcrypto.so liblz4.so libz.so libzstd.so ld-musl; do
+      for lib in libpq.so libxml2.so libssl.so libcrypto.so liblz4.so libz.so libzstd.so ld-musl libc.musl; do
         ls "$BIN_DIR/${lib}"* >/dev/null 2>&1 || missing="$missing $lib"
       done
       if [ -n "$missing" ]; then
