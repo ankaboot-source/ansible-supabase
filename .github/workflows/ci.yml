@@ -334,6 +334,20 @@ jobs:
           # .ready file means the segment is queued and nothing is collecting
           # it; a .done means it was archived; neither means the segment was
           # never completed.
+          # Which libraries the container already has, and at which versions.
+          # The relocation failures came from mixing these with the copies
+          # extracted from woblerr/pgbackrest; this shows whether the container
+          # can satisfy pgbackrest on its own.
+          echo "::group::libraries the db container provides"
+          sudo docker exec supabase-db sh -c \
+            'for l in libxml2 libpq libssh2 libzstd liblz4 libssl libcrypto libbz2; do
+               echo "-- $l"; ls -1 /usr/lib/${l}.so* /lib/${l}.so* 2>/dev/null | head -3
+             done' 2>&1 || true
+          echo "--- what the binary asks for ---"
+          sudo docker exec supabase-db sh -c \
+            'ldd /usr/lib/pgbackrest-bin/pgbackrest 2>&1 | head -20' 2>&1 || true
+          echo "::endgroup::"
+
           echo "::group::WAL archive_status (queued vs done)"
           sudo docker exec supabase-db sh -c \
             'ls -l /var/lib/postgresql/data/pg_wal/archive_status/ 2>&1 | head -20;

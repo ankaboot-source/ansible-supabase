@@ -219,28 +219,28 @@
 
       # Create the wrapper that the db container sees as /usr/bin/pgbackrest.
       #
-      # The db container is glibc, so the two cases are not symmetric.
-      if [ -n "$ld_musl" ]; then
-        # musl build. Its ELF interpreter is /lib/ld-musl-*.so.1, a path that
-        # does not exist in the db container, and LD_LIBRARY_PATH cannot help:
-        # the kernel loads PT_INTERP verbatim before any environment is
-        # consulted, so a plain exec fails with ENOENT whatever the env says.
-        # Invoke the extracted loader explicitly and let it resolve the rest.
-        ld_name="${ld_musl##*/}"
-        chmod 755 "$ld_musl"
-        printf '#!/bin/sh\nexec /usr/lib/pgbackrest-bin/%s --library-path /usr/lib/pgbackrest-bin /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' \
-          "$ld_name" > "$BACKUP_DIR/pgbackrest-wrapper"
-        echo "pgbackrest is musl-linked; the wrapper invokes ${ld_name} explicitly."
-      else
-        # glibc build. Its interpreter (/lib64/ld-linux-x86-64.so.2) is already
-        # present in the db container, so a plain exec works and LD_LIBRARY_PATH
-        # is enough to prefer our copies. Scoped to this wrapper rather than the
-        # container environment, which would poison PostgreSQL's own libraries.
-        printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/usr/lib/pgbackrest-bin\nexec /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' \
-          > "$BACKUP_DIR/pgbackrest-wrapper"
-        echo "pgbackrest is glibc-linked; the wrapper uses the container's own loader."
-      fi
+      # It is a plain exec, deliberately. supabase/postgres is itself musl-based,
+      # so the interpreter the binary names — /lib/ld-musl-x86_64.so.1 — already
+      # exists inside the container and the extracted binary runs natively.
+      #
+      # No --library-path, and no LD_LIBRARY_PATH. Forcing our extracted copies
+      # ahead of the container's own is what produced
+      #   Error relocating .../pgbackrest: xmlFreeDoc: symbol not found
+      #   Error relocating .../pgbackrest: PQconsumeInput: symbol not found
+      # because both sides ship libxml2, libpq and libssh2 at different
+      # versions and the process ended up with a mix of the two. Resolving
+      # through the default search path gives every process — including the
+      # workers pgbackrest forks for backup, which never inherit anything set
+      # here — one consistent set of libraries.
+      #
+      # The extracted libraries stay mounted at /usr/lib/pgbackrest-bin as a
+      # deliberate no-op: nothing points at that directory any more, and
+      # removing the mount is a separate change once this is proven.
+      printf '#!/bin/sh\nexec /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' \
+        > "$BACKUP_DIR/pgbackrest-wrapper"
       chmod 755 "$BACKUP_DIR/pgbackrest-wrapper"
+      [ -n "$ld_musl" ] && chmod 755 "$ld_musl"
+      echo "Wrapper execs pgbackrest directly; libraries resolve from the container."
 
       # NOTE: do not bind-mount a loader over /lib/ld-musl-*.so.1 or write
       # /etc/ld-musl-*.path in the db container. That was tried to make forked
