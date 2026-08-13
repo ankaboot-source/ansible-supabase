@@ -337,9 +337,9 @@ jobs:
       # and the database is still running on them.
       - name: Assert Postgres actually lives on the encrypted volume
         run: |
-          sudo test -f /data/PG_VERSION || {
-            echo "::error::No PGDATA on /data — the encrypted volume was mounted over it."
-            sudo ls -la /data || true
+          sudo test -f /data/pgdata/PG_VERSION || {
+            echo "::error::No PGDATA on /data/pgdata — the encrypted volume was mounted over it."
+            sudo ls -la /data /data/pgdata 2>&1 || true
             exit 1
           }
           echo "PGDATA is on the encrypted volume (PG_VERSION present)."
@@ -356,6 +356,22 @@ jobs:
           sudo docker ps -a --format '{{.Names}}\t{{.Status}}'
           sudo docker logs --tail 80 supabase-db 2>&1 || true
           exit 1
+
+      # This job had no log capture at all, so a deploy that ended with
+      # "container supabase-db is unhealthy" said nothing about why. The
+      # database is the thing most likely to object to a freshly formatted
+      # volume, so its own output is what matters here.
+      - name: Container logs on failure
+        if: failure()
+        run: |
+          sudo docker ps -a --format '{{.Names}}\t{{.Status}}' || true
+          echo "--- the encrypted volume ---"
+          mountpoint /data && sudo ls -la /data /data/pgdata 2>&1 || true
+          for c in supabase-db supabase-kong; do
+            echo "::group::logs: $c"
+            sudo docker logs --tail 120 "$c" 2>&1 || echo "(no such container)"
+            echo "::endgroup::"
+          done
 
   # ───────────────────────────────────────────────────────────────────────────
   # Caddy is the one component whose value is most visible to users — HTTPS on

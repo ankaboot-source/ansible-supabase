@@ -326,4 +326,11 @@ luks_filesystem: ext4
 luks_key_file: /root/.luks_keyfile
 mount_options: "defaults,noatime,nofail"
 
-supabase_data_path: "{{ luks_mount_point if supabase_encryption.enabled else '/var/lib/supabase/data' }}"
+# A subdirectory of the encrypted volume, never its root. mkfs.ext4 puts
+# lost+found at the root of a fresh filesystem, so PGDATA would not be empty and
+# initdb refuses to touch a directory that is not — the container then never
+# becomes healthy and the whole stack times out waiting on it:
+#   dependency failed to start: container supabase-db is unhealthy
+# Nothing has ever deployed with encryption on (the role could not format a
+# volume until now), so there is no existing layout to migrate.
+supabase_data_path: "{{ luks_mount_point ~ '/pgdata' if supabase_encryption.enabled else '/var/lib/supabase/data' }}"
