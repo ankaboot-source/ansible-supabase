@@ -20,6 +20,9 @@
     drill_vol: "pgbackrest-verify-{{ ansible_date_time.epoch }}"
     drill_container: "supabase-verify-restore{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
     drill_pg_port: "{{ backup_drill_pg_port | default('5433') }}"
+    # Same external network the db and MinIO share; pgbackrest.conf points at
+    # minio:9000, which only resolves there.
+    backup_network: "supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
 
   tasks:
     - name: Print resource warning
@@ -39,13 +42,22 @@
       command: docker volume create {{ drill_vol }}
       changed_when: true
 
+    # No lock directory from the db is mounted. /var/lib/pgbackrest holds only
+    # local lock state — the repository is in MinIO — so sharing the db's gains
+    # nothing and cost two failures already: the exporter re-chowning it broke
+    # archive-push, and mounting it :ro here made the image's entrypoint fail
+    # with "chown: /var/lib/pgbackrest/lock: Read-only file system". This
+    # container uses its own, from the image.
+    #
+    # It does need the backup network: the repo is reached at minio:9000, which
+    # does not resolve on the default bridge.
     - name: Restore into throwaway volume
       command: >
         docker run --rm
         --name {{ drill_container }}
+        --network {{ backup_network }}
         -v {{ drill_vol }}:/var/lib/postgresql/data
         -v {{ backup_compose_dir }}/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
-        -v {{ backup_compose_dir }}/volumes/pgbackrest:/var/lib/pgbackrest:ro
         {{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}
         pgbackrest --stanza={{ backup_stanza_name | default('main') }}
         --no-delta --archive-mode=off
