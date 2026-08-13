@@ -219,24 +219,24 @@
 
       # Create the wrapper that the db container sees as /usr/bin/pgbackrest.
       #
-      # It is a plain exec, deliberately. supabase/postgres is itself musl-based,
-      # so the interpreter the binary names — /lib/ld-musl-x86_64.so.1 — already
-      # exists inside the container and the extracted binary runs natively.
+      # supabase/postgres is itself musl-based, so /lib/ld-musl-x86_64.so.1 is
+      # already there and the extracted binary execs natively — no loader to
+      # invoke by hand.
       #
-      # No --library-path, and no LD_LIBRARY_PATH. Forcing our extracted copies
-      # ahead of the container's own is what produced
-      #   Error relocating .../pgbackrest: xmlFreeDoc: symbol not found
-      #   Error relocating .../pgbackrest: PQconsumeInput: symbol not found
-      # because both sides ship libxml2, libpq and libssh2 at different
-      # versions and the process ended up with a mix of the two. Resolving
-      # through the default search path gives every process — including the
-      # workers pgbackrest forks for backup, which never inherit anything set
-      # here — one consistent set of libraries.
+      # The libraries do have to come from us. An inventory of the container
+      # shows it ships libssl, libcrypto, libz and libzstd but *not* libxml2,
+      # libpq, libssh2, liblz4 or libbz2, and ldd on the binary confirms it:
+      #   Error loading shared library libpq.so.5: No such file or directory
+      # so it cannot satisfy pgbackrest on its own.
       #
-      # The extracted libraries stay mounted at /usr/lib/pgbackrest-bin as a
-      # deliberate no-op: nothing points at that directory any more, and
-      # removing the mount is a separate change once this is proven.
-      printf '#!/bin/sh\nexec /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' \
+      # LD_LIBRARY_PATH rather than --library-path, and that distinction is the
+      # whole bug. --library-path is an argument to one loader invocation;
+      # LD_LIBRARY_PATH is environment, and environment is inherited. pgbackrest
+      # forks workers for backup by re-executing itself, and those children
+      # inherit this while they could never inherit a loader flag — which is why
+      # the main process worked and every forked worker died with
+      # "Error relocating ...: symbol not found".
+      printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/usr/lib/pgbackrest-bin\nexec /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' \
         > "$BACKUP_DIR/pgbackrest-wrapper"
       chmod 755 "$BACKUP_DIR/pgbackrest-wrapper"
       [ -n "$ld_musl" ] && chmod 755 "$ld_musl"
