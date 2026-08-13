@@ -42,6 +42,20 @@
       command: docker volume create {{ drill_vol }}
       changed_when: true
 
+    # A new docker volume belongs to root. pgBackRest refuses to restore into a
+    # path that is not owned by the user running it — "[053]: unable to restore
+    # to path ... not owned by current user" — and running the restore as root
+    # does not satisfy it either, because the manifest records the files as
+    # owned by postgres. Give the volume to postgres first and restore as
+    # postgres, so the current user, the path owner and the manifest agree.
+    - name: Give the throwaway volume to postgres before restoring
+      command: >
+        docker run --rm --user 0:0
+        -v {{ drill_vol }}:/data
+        {{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}
+        chown 100:101 /data
+      changed_when: true
+
     # No lock directory from the db is mounted. /var/lib/pgbackrest holds only
     # local lock state — the repository is in MinIO — so sharing the db's gains
     # nothing and cost two failures already: the exporter re-chowning it broke
@@ -56,7 +70,7 @@
         docker run --rm
         --name {{ drill_container }}
         --network {{ backup_network }}
-        --user 0:0
+        --user 100:101
         -v {{ drill_vol }}:/var/lib/postgresql/data
         -v {{ backup_compose_dir }}/pgbackrest.conf:/tmp/pgbackrest.conf:ro
         {{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}
@@ -66,20 +80,6 @@
         --target-timeline=current --log-level-console=info restore
       register: restore_result
       failed_when: restore_result.rc != 0
-
-    # A fresh docker volume belongs to root, so the restore has to run as root
-    # to write into it at all — "[053]: unable to restore to path ... not owned
-    # by current user". The image also has no postgres account, so the manifest's
-    # ownership is mapped to whoever ran it ("unknown user 'postgres' ... mapped
-    # to current user") and everything lands root-owned. Postgres refuses to
-    # start on a PGDATA it does not own, so hand it over explicitly.
-    - name: Give the restored volume to postgres
-      command: >
-        docker run --rm --user 0:0
-        -v {{ drill_vol }}:/data
-        {{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}
-        chown -R 100:101 /data
-      changed_when: true
 
     - name: Start read-only Postgres on side port
       command: >
