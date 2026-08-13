@@ -32,6 +32,7 @@ docker volume create "$DRILL_VOL" >/dev/null
 # the repo is reached at minio:9000.
 docker run --rm \
   --name "$DRILL_CONTAINER" \
+  --user 0:0 \
   --network "supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}" \
   -v "$DRILL_VOL":/var/lib/postgresql/data \
   -v "$BACKUP_DIR/pgbackrest.conf:/tmp/pgbackrest.conf:ro" \
@@ -40,6 +41,13 @@ docker run --rm \
     --stanza="$STANZA" --no-delta --archive-mode=off \
     --target-timeline=current --log-level-console=info restore
 rc=$?
+if [ $rc -eq 0 ]; then
+  # The volume is fresh and root-owned, so the restore had to run as root; the
+  # image has no postgres account either, so everything landed root-owned.
+  # Postgres will not start on a PGDATA it does not own.
+  docker run --rm --user 0:0 -v "$DRILL_VOL":/data "$PGBR_IMAGE" \
+    chown -R 100:101 /data
+fi
 if [ $rc -ne 0 ]; then
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: restore drill failed (exit $rc)" >&2
   docker volume rm "$DRILL_VOL" >/dev/null 2>&1 || true
