@@ -41,21 +41,24 @@
     name: caddy
     system: yes
 
-- name: Create caddy user
+# Created once, with every group it needs. It used to be created and then
+# modified by a second `user` task, which made Ansible inspect the account's
+# home directory — a path that does not exist, because create_home is no and
+# no home was ever set. That second pass failed outright:
+#   "[Errno 2] No such file or directory: '/home/caddy/.ghcup'"
+# Pointing home at /var/lib/caddy, which this role creates just below, means
+# the account never references a path that is not there.
+- name: Create caddy user and group memberships
   become: true
   ansible.builtin.user:
     name: caddy
     group: caddy
-    system: yes
-    shell: /usr/sbin/nologin
-    create_home: no
-
-- name: Add caddy user to www-data group
-  become: true
-  ansible.builtin.user:
-    name: caddy
     groups: www-data
     append: yes
+    system: yes
+    home: /var/lib/caddy
+    shell: /usr/sbin/nologin
+    create_home: no
 
 - name: Ensure /var/lib/caddy directory exist
   become: true
