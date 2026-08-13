@@ -62,5 +62,9 @@ sed -i "s|^logflare_public_access_token:.*|logflare_public_access_token: $(gen_b
 sed -i "s|^logflare_private_access_token:.*|logflare_private_access_token: $(gen_b64 24)|" env/supabase.yml
 sed -i "s|^s3_protocol_access_key_id:.*|s3_protocol_access_key_id: $(gen_hex 16)|" env/supabase.yml
 sed -i "s|^s3_protocol_access_key_secret:.*|s3_protocol_access_key_secret: $(gen_hex 32)|" env/supabase.yml
+# Signs the SSO session tokens Caddy issues in front of Studio. It used to ship
+# as a real, working key committed to the repository and identical on every
+# install — enough for anyone reading it to forge a session past the SSO gate.
+sed -i "s|^jwt_shared_key:.*|jwt_shared_key: $(gen_b64 32)|" env/supabase.yml
 
 echo "env/supabase.yml updated with fresh secrets"

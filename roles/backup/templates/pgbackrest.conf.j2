@@ -4,7 +4,13 @@
 [global]
 # Repository settings
 repo1-type={{ backup_repo_type if backup_repo_type != 'minio' else 's3' }}
-repo1-path=/{{ minio_bucket_name if backup_repo_type == 'minio' else 'pgbackrest' }}
+# A path *inside* the bucket, never the bucket name. It used to be set to
+# minio_bucket_name, which put the bucket name in the object keys a second
+# time — pgbackrest then listed
+#   GET /supabase-backups/?prefix=supabase-backups/archive/main/
+# and MinIO answered 404, so stanza-create never produced archive.info and
+# every archive-push failed with "[103]: unable to find a valid repository".
+repo1-path=/pgbackrest
 {% if backup_repo_type == 'minio' %}
 # Local MinIO (S3-compatible)
 repo1-s3-bucket={{ minio_bucket_name }}
@@ -39,9 +45,25 @@ repo1-retention-diff={{ backup_retention_diff }}
 repo1-retention-archive={{ backup_retention_archive }}
 repo1-retention-archive-type={{ backup_retention_archive_type }}
 
-# WAL archiving (async — db container runs archive-push, spool is managed by pgBackRest)
-archive-async=y
-archive-push-queue-max=128MB
+# WAL archiving — synchronous on purpose.
+#
+# Async archiving makes pgbackrest fork a worker by re-executing itself, and
+# the binary here is not directly executable: it is musl-linked, lifted out of
+# an Alpine image, and reachable only through /usr/bin/pgbackrest, a wrapper
+# that invokes the musl loader explicitly. The spawned worker bypasses that
+# wrapper, so it never starts. The symptom is precise and was reproduced on
+# every run:
+#
+#   ERROR: [082]: unable to push WAL file '0000...0001' to the archive
+#                 asynchronously after 1m second(s)
+#          HINT: check '/var/log/pgbackrest/main-archive-push-async.log'
+#
+# with that log file never created, the spool empty, and every segment stuck
+# at .ready. Synchronous is pgBackRest's own default; it does the push in
+# process, so there is no re-exec to fail. On a single node the cost is
+# throughput under heavy write bursts, which is the right trade for archiving
+# that actually happens.
+archive-async=n
 
 # Logging
 log-level-console=info

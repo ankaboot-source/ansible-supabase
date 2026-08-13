@@ -7,7 +7,6 @@ set -eu
 BACKUP_DIR="/home/{{ deploy_user }}/backup"
 cd "$BACKUP_DIR"
 
-CONTAINER="supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
 STANZA="{{ backup_stanza_name }}"
 DRILL_VOL="pgbackrest-drill-$(date +%s)"
 DRILL_CONTAINER="supabase-pgbackrest-drill{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
@@ -19,45 +18,98 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting restore drill (throwaway volume:
 # Create throwaway volume
 docker volume create "$DRILL_VOL" >/dev/null
 
-# Restore into the throwaway volume (read-only repo mount, no delta, archive off)
-docker run --rm \
-  --name "$DRILL_CONTAINER" \
-  -v "$DRILL_VOL":/var/lib/postgresql/data \
-  -v "$BACKUP_DIR/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" \
-  -v "$BACKUP_DIR/volumes/pgbackrest:/var/lib/pgbackrest:ro" \
-  "$PGBR_IMAGE" \
-  pgbackrest --stanza="$STANZA" --no-delta --archive-mode=off \
-    --target-timeline=current --log-level-console=info restore
-rc=$?
-if [ $rc -ne 0 ]; then
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: restore drill failed (exit $rc)" >&2
+# Every exit path drops the container and the volume. This used to be done
+# branch by branch, and under `set -e` a failing docker run left the script
+# before any of those branches: a failed drill leaked a volume the size of the
+# database, on a schedule.
+cleanup() {
+  docker rm -f "${DRILL_CONTAINER}-pg" >/dev/null 2>&1 || true
   docker volume rm "$DRILL_VOL" >/dev/null 2>&1 || true
-  exit $rc
+}
+trap cleanup EXIT
+
+# Restore into the throwaway volume (no delta, archive off).
+#
+# The config is mounted outside /etc/pgbackrest and passed with --config: the
+# image's entrypoint chowns /etc/pgbackrest/pgbackrest.conf on startup and dies
+# on a read-only mount ("chown: ...: Read-only file system", exit 53). Keeping
+# it read-only elsewhere means this throwaway container cannot write to the
+# real config either.
+#
+# No lock directory from the db is mounted — /var/lib/pgbackrest is local lock
+# state, the repository is remote — and the backup network is joined because
+# the repo is reached at minio:9000.
+if ! docker run --rm \
+  --name "$DRILL_CONTAINER" \
+  --user 0:0 \
+  --entrypoint pgbackrest \
+  --network "supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}" \
+  -v "$DRILL_VOL":/var/lib/postgresql/data \
+  -v "$BACKUP_DIR/pgbackrest.conf:/tmp/pgbackrest.conf:ro" \
+  "$PGBR_IMAGE" \
+  --config=/tmp/pgbackrest.conf \
+    --stanza="$STANZA" --no-delta --archive-mode=off \
+    --type=immediate --target-action=promote \
+    --log-level-console=info restore
+then
+  # Tested with `if`, not by reading $? afterwards: `set -e` ended the script on
+  # the failing command, so the error branch that used to follow could never run.
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: restore drill failed" >&2
+  exit 1
 fi
+
+# Restoring as uid 100 segfaults: no passwd entry in the image. Root is the
+# workable identity, so hand the result to postgres before starting it.
+docker run --rm --user 0:0 --entrypoint chown \
+  -v "$DRILL_VOL":/data "$PGBR_IMAGE" -R 100:101 /data
 
 # Start a read-only Postgres on a side port to healthcheck.
 # Use POSTGRES_HOST_AUTH_METHOD=trust so the restored PGDATA accepts local
 # connections without needing the original password.
-docker run -d --rm \
+# No --rm: on failure the container would vanish with its logs and the only
+# evidence left would be "No such container". The EXIT trap removes it.
+docker run -d \
   --name "${DRILL_CONTAINER}-pg" \
+  --network "supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}" \
   -e POSTGRES_HOST_AUTH_METHOD=trust \
+  -v "$BACKUP_DIR/pgbackrest-wrapper:/usr/bin/pgbackrest:ro" \
+  -v "$BACKUP_DIR/pgbackrest-bin:/usr/lib/pgbackrest-bin:ro" \
+  -v "$BACKUP_DIR/pgbackrest.conf:/tmp/pgbackrest.conf:ro" \
+  -v "$BACKUP_DIR/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" \
   -p 127.0.0.1:{{ backup_drill_pg_port | default('5433') }}:5432 \
   -v "$DRILL_VOL":/var/lib/postgresql/data \
   "$PG_IMAGE" \
   -c archive_mode=off >/dev/null
-sleep 10
 
-# Healthcheck: can we connect + is it writable?
-if docker exec "${DRILL_CONTAINER}-pg" pg_isready -q; then
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Drill Postgres is accepting connections."
-else
+# Polled, not slept at: the restored server has to replay WAL to reach
+# consistency before it accepts connections, and how long that takes depends on
+# how much WAL stands between the backup and the end of the archive. A flat ten
+# seconds passed or failed on database size rather than on restorability.
+ready=no
+i=0
+while [ "$i" -lt 24 ]; do
+  if docker exec "${DRILL_CONTAINER}-pg" pg_isready -q -U postgres -h localhost; then
+    ready=yes
+    break
+  fi
+  i=$((i + 1))
+  sleep 5
+done
+
+if [ "$ready" != yes ]; then
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: drill Postgres did not become ready" >&2
-  docker stop "${DRILL_CONTAINER}-pg" >/dev/null 2>&1 || true
-  docker volume rm "$DRILL_VOL" >/dev/null 2>&1 || true
+  echo "---- docker logs ${DRILL_CONTAINER}-pg (last 60 lines) ----" >&2
+  docker logs --tail 60 "${DRILL_CONTAINER}-pg" >&2 2>&1 || true
+  exit 1
+fi
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Drill Postgres is accepting connections."
+
+# Connecting proves recovery finished; querying proves the catalog came back.
+if ! docker exec "${DRILL_CONTAINER}-pg" \
+     psql -U postgres -c "SELECT count(*) FROM pg_database;" >/dev/null; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: restored database did not answer a query" >&2
+  docker logs --tail 60 "${DRILL_CONTAINER}-pg" >&2 2>&1 || true
   exit 1
 fi
 
-# Cleanup
-docker stop "${DRILL_CONTAINER}-pg" >/dev/null 2>&1 || true
-docker volume rm "$DRILL_VOL" >/dev/null 2>&1 || true
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Restore drill passed."

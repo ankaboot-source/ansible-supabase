@@ -297,10 +297,32 @@ gen_jwt() {
 # sed helper: replace a `key: value` line in env/supabase.yml (anchored at line start).
 set_env_var() {
   local key="$1" val="$2"
+  # cfg_get yields an empty string for a key that is absent from config.yml,
+  # and writing that would replace the shipped default in env/supabase.yml with
+  # nothing. env/supabase.yml is passed as extra-vars, which outrank role
+  # defaults, so the blank wins everywhere — which is how backup_creds_source,
+  # defaulted to "env" in both env/supabase.yml and roles/backup/defaults,
+  # still reached the backup role empty and tripped its assertion. 33 of the
+  # calls here read optional advanced.* keys, so this was latent in all of
+  # them. Absent means "keep the default": skip rather than blank.
+  # Callers that need to clear a value pass an explicit one.
+  if [[ -z "$val" ]]; then
+    return 0
+  fi
   # Escape forward slashes and ampersands for sed replacement.
   local escaped
   escaped="$(printf '%s' "$val" | sed -e 's/[\/&]/\\&/g')"
-  sed -i "s|^${key}:.*|${key}: ${escaped}|" "$ENV_FILE"
+  # Substitution only replaces a line that is already there. A key this script
+  # writes but env/supabase.yml does not carry matched nothing and was dropped
+  # in silence — no error, no warning, the setting simply had no effect.
+  # caddy_tls_internal was exactly that: config.yml asked for tls_internal,
+  # setup.sh dutifully "wrote" it, and Caddy still went to Let's Encrypt for
+  # .invalid hostnames. Append when the key is new.
+  if grep -qE "^${key}:" "$ENV_FILE"; then
+    sed -i "s|^${key}:.*|${key}: ${escaped}|" "$ENV_FILE"
+  else
+    printf '%s: %s\n' "$key" "$val" >> "$ENV_FILE"
+  fi
 }
 
 log "Rendering env/supabase.yml…"
@@ -392,6 +414,11 @@ elif cfg_bool "secrets.generate"; then
   set_env_var "logflare_private_access_token" "$(gen_b64 24)"
   set_env_var "s3_protocol_access_key_id"    "$(gen_hex 16)"
   set_env_var "s3_protocol_access_key_secret" "$(gen_hex 32)"
+  # Signs the SSO session tokens Caddy issues in front of Studio. It was the
+  # one secret nobody generated: env/supabase.yml shipped a real, working key,
+  # committed and identical on every install, so anyone reading this repository
+  # could mint a valid session and walk past the SSO gate.
+  set_env_var "jwt_shared_key"               "$(gen_b64 32)"
   ok "Secrets generated and written to env/supabase.yml."
 else
   log "Using user-provided secrets from config.yml…"
@@ -411,11 +438,53 @@ fi
 
 # ─── Advanced component config → env/supabase.yml ─────────────────────────────
 if cfg_bool "components.caddy"; then
-  set_env_var "SSO_PROVIDER"        "$(cfg_get "advanced.caddy.sso_provider")"
+  # roles/caddy renders templates/Caddyfile-<SSO_PROVIDER>.j2 and those
+  # filenames are lowercase, while config.example.yml documents "Generic" with
+  # a capital G. Both spellings used to break, in opposite ways: "Generic"
+  # matched the credential case below but resolved to a template that does not
+  # exist, and "generic" found the template but fell through the case, leaving
+  # the OIDC client id/secret at their placeholders. Normalise once, up front.
+  sso_provider="$(cfg_get "advanced.caddy.sso_provider" | tr '[:upper:]' '[:lower:]')"
+  set_env_var "SSO_PROVIDER"        "$sso_provider"
   set_env_var "root_domain"          "$(cfg_get "advanced.caddy.root_domain")"
   set_env_var "base_auth_domain"     "$(cfg_get "advanced.caddy.base_auth_domain")"
+  # Certificates from Caddy's local CA rather than ACME. Off unless asked for;
+  # CI needs it because Let's Encrypt cannot validate a name that is
+  # deliberately unresolvable.
+  if cfg_bool "advanced.caddy.tls_internal"; then
+    set_env_var "caddy_tls_internal" "true"
+  fi
+  # Caddy source-IP allow list (inside projects.supabase.allowed_ips).
+  # env/supabase.yml ships two placeholder addresses and nothing ever replaced
+  # them, so the template's catch-all "respond 403" meant every deploy driven
+  # from config.yml answered Forbidden to everyone but two example IPs. Absent
+  # or empty now means no IP restriction at all.
+  python3 - "$ENV_FILE" "$CONFIG_FILE" <<'PYEOF'
+import sys, re, yaml
+env_path, cfg_path = sys.argv[1], sys.argv[2]
+with open(cfg_path) as f:
+    cfg = yaml.safe_load(f) or {}
+ips = (((cfg.get('advanced') or {}).get('caddy') or {}).get('allowed_ips')) or []
+with open(env_path) as f:
+    content = f.read()
+block = ("    allowed_ips:\n" + "".join("      - %s\n" % ip for ip in ips)
+         if ips else "    allowed_ips: []\n")
+content = re.sub(
+    # DOTALL is needed for the non-greedy hop down to allowed_ips, so the list
+    # items must use [^\n]* — a plain .* would match newlines too and swallow
+    # the rest of the file, monitor block included.
+    r'\n(projects:\n  supabase:.*?\n)    allowed_ips:\n(?:      - [^\n]*\n)+',
+    lambda m: "\n" + m.group(1) + block,
+    content,
+    count=1,
+    flags=re.DOTALL,
+)
+with open(env_path, 'w') as f:
+    f.write(content)
+PYEOF
+
   # SSO credentials are provider-specific; map common fields.
-  case "$(cfg_get "advanced.caddy.sso_provider")" in
+  case "$sso_provider" in
     github)
       set_env_var "github_oauth_client_id"     "$(cfg_get "advanced.caddy.sso_client_id")"
       set_env_var "github_oauth_client_secret" "$(cfg_get "advanced.caddy.sso_client_secret")"
@@ -433,7 +502,7 @@ if cfg_bool "components.caddy"; then
       set_env_var "discord_oauth_client_secret" "$(cfg_get "advanced.caddy.sso_client_secret")"
       # no allow list — Discord uses role-based auth (admin_role_id + discord_guild_id)
       ;;
-    Generic)
+    generic)
       set_env_var "oidc_client_id"             "$(cfg_get "advanced.caddy.sso_client_id")"
       set_env_var "oidc_client_secret"         "$(cfg_get "advanced.caddy.sso_client_secret")"
       allow_list="$(cfg_get "advanced.caddy.sso_allow_list")"
@@ -628,7 +697,21 @@ main_play_header = """
   roles:
    # ─── Always-on (prerequisites + instance contract) ───
    - docker                    # Docker Engine + Compose v2 (Debian family + Arch)
-   - supabase                  # Full Supabase stack
+"""
+
+# LUKS is emitted before supabase, not with the other advanced roles. When
+# encryption is on, supabase_data_path *is* luks_mount_point, so running it
+# afterwards meant the supabase role created that directory on the root disk,
+# Postgres initialised its PGDATA there in the clear, and the encrypted volume
+# was then mounted on top — hiding a live database behind an empty filesystem
+# and leaving its data unencrypted on the disk underneath. The volume has to
+# exist and be mounted before anything writes to it.
+early_role_lines = []
+if components.get("luks"):
+    early_role_lines.append("   - role: luks              # At-rest disk encryption (LUKS)")
+    early_role_lines.append("     when: supabase_encryption.enabled")
+
+main_play_body = """   - supabase                  # Full Supabase stack
    - manifest                  # /etc/supabase/instance.json — instance contract
    - agent_access              # SSH-stdio MCP agent + info CLI
 
@@ -639,9 +722,6 @@ main_play_header = """
 role_lines = []
 if components.get("ufw"):
     role_lines.append("   - ufw                     # Firewall — allow/deny rules per port")
-if components.get("luks"):
-    role_lines.append("   - role: luks              # At-rest disk encryption (LUKS)")
-    role_lines.append("     when: supabase_encryption.enabled")
 if components.get("caddy"):
     role_lines.append("   - caddy                   # Reverse proxy + automatic TLS + SSO")
 if components.get("monitor"):
@@ -652,6 +732,9 @@ if components.get("backup"):
     role_lines.append("   - backup                  # Automated backups + PITR (pgBackRest)")
 
 content = bootstrap_play + main_play_header
+if early_role_lines:
+    content += "\n".join(early_role_lines) + "\n"
+content += main_play_body
 if role_lines:
     content += "\n".join(role_lines) + "\n"
 else:
