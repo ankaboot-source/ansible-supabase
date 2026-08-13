@@ -311,7 +311,17 @@ set_env_var() {
   # Escape forward slashes and ampersands for sed replacement.
   local escaped
   escaped="$(printf '%s' "$val" | sed -e 's/[\/&]/\\&/g')"
-  sed -i "s|^${key}:.*|${key}: ${escaped}|" "$ENV_FILE"
+  # Substitution only replaces a line that is already there. A key this script
+  # writes but env/supabase.yml does not carry matched nothing and was dropped
+  # in silence — no error, no warning, the setting simply had no effect.
+  # caddy_tls_internal was exactly that: config.yml asked for tls_internal,
+  # setup.sh dutifully "wrote" it, and Caddy still went to Let's Encrypt for
+  # .invalid hostnames. Append when the key is new.
+  if grep -qE "^${key}:" "$ENV_FILE"; then
+    sed -i "s|^${key}:.*|${key}: ${escaped}|" "$ENV_FILE"
+  else
+    printf '%s: %s\n' "$key" "$val" >> "$ENV_FILE"
+  fi
 }
 
 log "Rendering env/supabase.yml…"
