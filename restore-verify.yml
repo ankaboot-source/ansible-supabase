@@ -103,6 +103,7 @@
         -v {{ drill_vol }}:/var/lib/postgresql/data
         -v {{ backup_compose_dir }}/pgbackrest-wrapper:/usr/bin/pgbackrest:ro
         -v {{ backup_compose_dir }}/pgbackrest-bin:/usr/lib/pgbackrest-bin:ro
+        -v {{ backup_compose_dir }}/pgbackrest.conf:/tmp/pgbackrest.conf:ro
         -v {{ backup_compose_dir }}/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
         {{ sb_db_version | default('supabase/postgres:17.6.1.136') }}
         -c archive_mode=off
