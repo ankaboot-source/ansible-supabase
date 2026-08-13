@@ -54,14 +54,37 @@ services:
       PGBACKREST_STANZA: {{ backup_stanza_name }}
     volumes:
       - ./pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
-      - ./volumes/pgbackrest:/var/lib/pgbackrest:z
+      # Its own lock directory, not the db's. /var/lib/pgbackrest holds only
+      # local lock state — the repository itself lives in MinIO over S3 — so
+      # there is nothing here the two need to share. Sharing it meant this
+      # container's entrypoint re-chowned the directory to the image's uid and
+      # PostgreSQL could no longer create /var/lib/pgbackrest/lock/*.lock, which
+      # broke every archive-push.
+      - ./volumes/pgbackrest-exporter:/var/lib/pgbackrest:z
     ports:
       - 127.0.0.1:{{ pgbackrest_exporter_port }}:9854
     networks:
       - default
+{% if monitor_stack_deployed | default(false) | bool %}
+      # Prometheus could not reach this exporter at all. The port above is
+      # published on 127.0.0.1, and Prometheus scrapes from inside a container,
+      # where the host gateway is a different address entirely:
+      #   dial tcp 172.17.0.1:9854: connect: connection refused
+      # Every backup alert this repository ships was therefore evaluated
+      # against a target that was permanently down. Joining the exporter to the
+      # monitoring network gives Prometheus a route to it — and nothing else:
+      # only this container is attached, so the monitoring stack gains no path
+      # to MinIO or to the database, which stay on supabase-backup-net.
+      - monitor
+{% endif %}
 {% endif %}
 
 networks:
   default:
     external: true
     name: supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
+{% if monitor_stack_deployed | default(false) | bool %}
+  monitor:
+    external: true
+    name: supabase-monitor-net
+{% endif %}

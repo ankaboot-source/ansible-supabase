@@ -11,7 +11,7 @@
   hosts: all
   become: true
   vars:
-    pgbackrest_container: "supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+    pgbackrest_container: "supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
 
   tasks:
     - name: Run full backup

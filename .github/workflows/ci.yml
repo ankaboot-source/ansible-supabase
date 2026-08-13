@@ -85,16 +85,18 @@ jobs:
   # Hermetic shell-level tests. No Docker, no Ansible — the deploy step is
   # stubbed inside the test harness.
   #
-  # Two of the three suites are red on main today, so they run advisory rather
-  # than blocking. Their baselines are asserted below: the counts may improve,
-  # never regress. Tighten each one to a plain `bash tests/...` gate as it
-  # reaches zero failures.
+  # All three suites are green and all three block. They used to run advisory
+  # against baselines of 1 and 14 failures; both baselines were tests that had
+  # drifted from the code rather than defects in it, and both are gone:
   #
-  #   test-backup.sh   1 failure  — TC-BACKUP-039 (db container pgbackrest mounts)
-  #   test-migrate.sh  14 failures — assertion text drifted from migrate.sh's
-  #                                  actual messages. Exit codes are correct
-  #                                  (the script does refuse), so the suite can
-  #                                  no longer prove *why* it refused.
+  #   test-backup.sh   asserted the db container bind-mounts the pgbackrest
+  #                    binary onto /usr/bin/pgbackrest. It mounts a wrapper
+  #                    there instead, because the binary needs libraries the
+  #                    image does not carry.
+  #   test-migrate.sh  filled the sandbox config by matching on the example
+  #                    file's *comments*. Two were reworded, two required
+  #                    fields silently stopped being filled, and every scenario
+  #                    died at validation without reaching what it tested.
   # ───────────────────────────────────────────────────────────────────────────
   unit:
     name: Unit tests
@@ -106,27 +108,11 @@ jobs:
       - name: setup.sh
         run: bash tests/test-setup.sh
 
-      - name: backup role (baseline 1 failure)
-        run: |
-          bash tests/test-backup.sh | tee /tmp/backup.log || true
-          failures=$(grep -oP 'FAIL:\s*\K[0-9]+' /tmp/backup.log | tail -1)
-          echo "test-backup.sh failures: ${failures} (baseline 1)" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "${failures:-99}" -gt 1 ]; then
-            echo "::error::Regression — was 1 failure, now ${failures}."
-            exit 1
-          fi
+      - name: backup role
+        run: bash tests/test-backup.sh
 
-      - name: migrate.sh (baseline 14 failures)
-        run: |
-          bash tests/test-migrate.sh | tee /tmp/migrate.log || true
-          failures=$(grep -oP 'Results: [0-9]+ passed, \K[0-9]+' /tmp/migrate.log | tail -1)
-          echo "test-migrate.sh failures: ${failures} (baseline 14)" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "${failures:-99}" -gt 14 ]; then
-            echo "::error::Regression — was 14 failures, now ${failures}."
-            exit 1
-          fi
+      - name: migrate.sh
+        run: bash tests/test-migrate.sh
 
   # ───────────────────────────────────────────────────────────────────────────
   # Real deployment on the runner itself. The GitHub-hosted runner is a
@@ -198,6 +184,29 @@ jobs:
               repo_type: minio
           YAML
 
+      # pgbackrest runs *inside* supabase-db, which is glibc, so the libc of the
+      # image it is extracted from decides whether the wrapper needs to invoke a
+      # loader by hand. Sourcing a glibc build would delete that whole class of
+      # problem — two bugs came out of it in one day. Which variants exist and
+      # what they link against cannot be checked from behind a proxy that blocks
+      # the registry, so it is recorded here on every run.
+      - name: Report the pgBackRest image variants
+        run: |
+          for tag in 2.58.0 2.58.0-alpine; do
+            img="woblerr/pgbackrest:${tag}"
+            if ! sudo docker pull -q "$img" >/dev/null 2>&1; then
+              echo "${img}: not published"
+              continue
+            fi
+            cid=$(sudo docker create "$img")
+            sudo docker cp "$cid:/usr/bin/pgbackrest" /tmp/pgb-probe 2>/dev/null || true
+            sudo docker rm "$cid" >/dev/null
+            interp=$(readelf -l /tmp/pgb-probe 2>/dev/null \
+              | sed -n 's/.*interpreter: \(.*\)\]/\1/p')
+            echo "${img}: interpreter=${interp:-unknown}"
+            sudo rm -f /tmp/pgb-probe
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Deploy
         run: sudo bash setup.sh --yes
 
@@ -215,6 +224,18 @@ jobs:
           done
           echo "::error::Containers did not become healthy within 10 minutes."
           sudo docker ps --format '{{.Names}}\t{{.Status}}'
+          # Name the offenders and print their healthcheck output. Without this
+          # the only evidence is every container's stdout dumped by the step
+          # below, which buries the one line that says what actually failed.
+          sudo docker ps --format '{{.Names}}\t{{.Status}}' \
+            | grep 'unhealthy\|starting' | cut -f1 \
+            | while read -r c; do
+                echo "::group::healthcheck output: $c"
+                sudo docker inspect \
+                  --format '{{range .State.Health.Log}}exit={{.ExitCode}}{{"\n"}}{{.Output}}{{end}}' \
+                  "$c" 2>/dev/null || echo "(no healthcheck defined)"
+                echo "::endgroup::"
+              done
           exit 1
 
       - name: Smoke test the API gateway
@@ -246,11 +267,162 @@ jobs:
           sudo ansible-playbook -i localhost, -c local restore-verify.yml \
             -e @env/supabase.yml
 
+      # pgbackrest is a musl binary running inside a glibc container via an
+      # explicitly-invoked loader, and PostgreSQL calls it from archive_command
+      # on every WAL segment. Two failure modes look alike from the outside —
+      # it cannot execute, or it executes and blocks on the repo — but they
+      # need opposite fixes, and only the second explains "pg_ctl: server does
+      # not shut down". The timeout below is what tells them apart.
+      - name: pgBackRest state on failure
+        if: failure()
+        run: |
+          echo "::group::what the db container actually sees"
+          sudo docker exec supabase-db sh -c \
+            'ls -l /usr/bin/pgbackrest; ls -l /usr/lib/pgbackrest-bin/ | head -25' 2>&1 || true
+          echo "::endgroup::"
+          echo "::group::does it execute, and does it return?"
+          if sudo timeout 30 docker exec supabase-db pgbackrest version 2>&1; then
+            echo "-> executes and returns"
+          else
+            rc=$?
+            [ "$rc" -eq 124 ] \
+              && echo "-> TIMED OUT: it runs but blocks. archive_command hanging explains a stuck shutdown." \
+              || echo "-> failed fast with exit ${rc}: it cannot execute."
+          fi
+          echo "::endgroup::"
+          echo "::group::archiver state"
+          sudo docker exec supabase-db psql -U supabase_admin -d postgres -Xc \
+            "select name, setting from pg_settings where name in ('archive_mode','archive_command');" 2>&1 || true
+          sudo docker exec supabase-db psql -U supabase_admin -d postgres -Xc \
+            "select archived_count, failed_count, last_failed_wal, last_failed_time from pg_stat_archiver;" 2>&1 || true
+          echo "::endgroup::"
+
+          # stanza-create and backup run through `docker exec`, i.e. as root,
+          # and they succeed. archive-push is spawned by the postmaster as the
+          # postgres user, and it fails every time. The difference is the user,
+          # not the binary — so look at what differs for that user.
+          # Establish who the postmaster actually runs as rather than assuming a
+          # name: "supabase_admin" in the config is a PostgreSQL role, not a Unix
+          # account, and nothing here says the account is called "postgres".
+          echo "::group::who the postmaster runs as, and what it can reach"
+          sudo docker exec supabase-db sh -c \
+            'echo "pid 1: $(ps -o user=,uid= -p 1 2>/dev/null)"; \
+             echo "PGDATA owner: $(stat -c "%U(%u):%G(%g)" /var/lib/postgresql/data 2>/dev/null)"; \
+             echo "--- passwd ---"; cat /etc/passwd 2>/dev/null | tail -12' 2>&1 || true
+          sudo docker exec supabase-db ls -ldn \
+            /var/lib/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest \
+            /etc/pgbackrest/pgbackrest.conf /usr/bin/pgbackrest 2>&1 || true
+          echo "::endgroup::"
+
+          # archived_count and failed_count both at 0 means the archiver never
+          # even attempted the segment — a failing archive_command would raise
+          # failed_count. archive_status is where PostgreSQL records that: a
+          # .ready file means the segment is queued and nothing is collecting
+          # it; a .done means it was archived; neither means the segment was
+          # never completed.
+          # Which libraries the container already has, and at which versions.
+          # The relocation failures came from mixing these with the copies
+          # extracted from woblerr/pgbackrest; this shows whether the container
+          # can satisfy pgbackrest on its own.
+          echo "::group::libraries the db container provides"
+          sudo docker exec supabase-db sh -c \
+            'for l in libxml2 libpq libssh2 libzstd liblz4 libssl libcrypto libbz2; do
+               echo "-- $l"; ls -1 /usr/lib/${l}.so* /lib/${l}.so* 2>/dev/null | head -3
+             done' 2>&1 || true
+          echo "--- what the binary asks for ---"
+          sudo docker exec supabase-db sh -c \
+            'ldd /usr/lib/pgbackrest-bin/pgbackrest 2>&1 | head -20' 2>&1 || true
+          echo "::endgroup::"
+
+          echo "::group::WAL archive_status (queued vs done)"
+          sudo docker exec supabase-db sh -c \
+            'ls -l /var/lib/postgresql/data/pg_wal/archive_status/ 2>&1 | head -20;
+             echo "--- segments ---";
+             ls /var/lib/postgresql/data/pg_wal/ 2>/dev/null | head -10' 2>&1 || true
+          echo "::endgroup::"
+
+          # PostgreSQL logs to /var/log/postgresql, a mounted volume, not to
+          # stdout — which is why every `docker logs | grep archive` in these
+          # diagnostics has come back empty. This is where "archive command
+          # failed" would actually appear.
+          echo "::group::PostgreSQL's own log files"
+          sudo docker exec supabase-db sh -c \
+            'for f in /var/log/postgresql/*; do
+               [ -f "$f" ] || continue
+               echo "──────── $f"; tail -40 "$f"
+             done' 2>&1 || echo "(no files under /var/log/postgresql)"
+          echo "::endgroup::"
+
+          # pgbackrest logs to files under --log-path, not to stdout, so the
+          # grep below finds nothing on its own. With --archive-async the work
+          # happens in a spawned process whose only trace is its own log file —
+          # which is exactly what is missing when archive-push neither fails nor
+          # returns.
+          echo "::group::pgbackrest's own logs"
+          sudo docker exec supabase-db sh -c \
+            'for f in /var/log/pgbackrest/*.log; do
+               [ -f "$f" ] || continue
+               echo "──────── $f"; tail -60 "$f"
+             done' 2>&1 || echo "(no pgbackrest log files)"
+          echo "::endgroup::"
+
+          # With archive-async, pgbackrest re-executes itself to spawn the
+          # worker. /usr/bin/pgbackrest is a wrapper script that execs the musl
+          # loader, so the "currently running executable" is the loader, not the
+          # wrapper — a re-exec of it would not be a working pgbackrest. If a
+          # `cmd` option exists it can be pointed back at the wrapper; this
+          # records whether it does, since pgbackrest.org is unreachable from
+          # the dev environment.
+          echo "::group::does this build have a cmd option, and what is exec'd"
+          sudo docker exec supabase-db sh -c \
+            'pgbackrest help archive-push 2>&1 | grep -iE "^ *(cmd|spool-path|archive-async)" || echo "(no cmd/spool-path/archive-async in help)"' 2>&1 || true
+          sudo docker exec supabase-db sh -c \
+            'ls -l /proc/self/exe; readlink -f /usr/bin/pgbackrest; cat /usr/bin/pgbackrest' 2>&1 || true
+          echo "::endgroup::"
+
+          echo "::group::spool state (archive-async stages here)"
+          sudo docker exec supabase-db sh -c \
+            'ls -lRn /var/spool/pgbackrest 2>/dev/null | head -40' 2>&1 || true
+          echo "::endgroup::"
+
+          # Separates "pgbackrest is stuck" from "the repo is unreachable": a
+          # TCP connect to an address with no route hangs rather than refusing,
+          # which looks identical from the outside.
+          echo "::group::can the db container reach MinIO?"
+          sudo timeout 20 docker exec supabase-db bash -c \
+            'if timeout 5 bash -c "exec 3<>/dev/tcp/minio/9000" 2>/dev/null; then
+               echo "TCP connect to minio:9000 OK"
+             else
+               echo "TCP connect to minio:9000 FAILED or timed out"
+             fi
+             getent hosts minio || echo "(minio does not resolve)"' 2>&1 || true
+          echo "::endgroup::"
+
+          echo "::group::what PostgreSQL logged about archiving"
+          sudo docker logs supabase-db 2>&1 | grep -iE 'archive|pgbackrest' | tail -40 || true
+          echo "::endgroup::"
+
       - name: Container logs on failure
         if: failure()
         run: |
           sudo docker ps -a --format '{{.Names}}\t{{.Status}}'
-          for c in $(sudo docker ps -aq); do
-            echo "──────── $(sudo docker inspect --format '{{.Name}}' "$c")"
-            sudo docker logs --tail 80 "$c" 2>&1 || true
+          # Dump the suspects first and only, in collapsed groups. Dumping 80
+          # lines for every container produced ~1200 lines in which the one
+          # useful line was unfindable — three failures were diagnosed against
+          # a log whose own diagnostics had scrolled off the top.
+          suspects="$(sudo docker ps -a --format '{{.Names}}\t{{.Status}}' \
+            | grep -Ei 'unhealthy|restarting|starting|created|exited \([1-9]' | cut -f1 || true)"
+          if [ -z "$suspects" ]; then
+            echo "No container is unhealthy, restarting, exited or stuck created."
+            suspects="$(sudo docker ps -a --format '{{.Names}}')"
+            echo "Falling back to all containers, 25 lines each."
+            tail_n=25
+          else
+            echo "Containers in a bad state:"; echo "$suspects"
+            tail_n=120
+          fi
+          for c in $suspects; do
+            echo "::group::docker logs: $c (last ${tail_n})"
+            sudo docker logs --tail "$tail_n" "$c" 2>&1 | tail -n "$tail_n" || true
+            echo "::endgroup::"
           done

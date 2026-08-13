@@ -143,7 +143,7 @@
       IMAGE="{{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}"
 
       # Remove Docker-created dirs that shadow our bind-mount sources
-      for p in /usr/bin/pgbackrest "$BIN_DIR/pgbackrest" "$BIN_DIR"/lib*; do
+      for p in /usr/bin/pgbackrest "$BIN_DIR/pgbackrest" "$BIN_DIR"/lib* "$BIN_DIR"/ld-musl*; do
         [ -e "$p" ] || continue
         [ -d "$p" ] && rm -rf "$p" || rm -f "$p"
       done
@@ -156,17 +156,37 @@
         docker create --name "$TMPCTR" "$IMAGE"
         mkdir -p "$BIN_DIR"
         docker cp "$TMPCTR:/usr/bin/pgbackrest" "$BIN_DIR/pgbackrest"
-        # Copy entire /usr/lib from Alpine image — docker cp doesn't support globs
-        docker cp "$TMPCTR:/usr/lib" "$BIN_DIR/lib-alpine"
-        # Move only the libs pgbackrest needs into the flat BIN_DIR
-        for lib in libbz2.so libcrypto.so libcurl.so libgcrypt.so libgpg-error.so libhistory.so libintl.so libjson-c.so liblz4.so liblzma.so libpcre2.so libpq.so libprotobuf-c.so libssh2.so libssl.so libxml2.so libz.so libzstd.so libc.musl ld-musl; do
-          cp "$BIN_DIR/lib-alpine/${lib}"* "$BIN_DIR/" 2>/dev/null || true
+        # Copy whole lib dirs — docker cp takes no globs. Several are needed
+        # because the layout differs by distro: Alpine keeps dependencies in
+        # /usr/lib but the musl loader is a real file in /lib, while Debian
+        # multiarch puts nearly everything under /usr/lib/x86_64-linux-gnu and
+        # the glibc loader in /lib64. Missing dirs are not an error — the image
+        # only has the ones its distro uses.
+        for d in /usr/lib /lib /lib64 /usr/lib/x86_64-linux-gnu; do
+          docker cp "$TMPCTR:$d" "$BIN_DIR/src$(echo "$d" | tr / _)" 2>/dev/null || true
         done
-        rm -rf "$BIN_DIR/lib-alpine"
+        # Move only the libs pgbackrest needs into the flat BIN_DIR. -L resolves
+        # symlinks into real files, since anything left pointing at an absolute
+        # in-image path dangles once it is outside the image.
+        for lib in libbz2.so libcrypto.so libcurl.so libgcrypt.so libgpg-error.so libhistory.so libintl.so libjson-c.so liblz4.so liblzma.so libpcre2.so libpq.so libprotobuf-c.so libssh2.so libssl.so libxml2.so libz.so libzstd.so libc.musl ld-musl ld-linux-x86-64; do
+          for src in "$BIN_DIR"/src_*; do
+            [ -d "$src" ] || continue
+            cp -L "$src/${lib}"* "$BIN_DIR/" 2>/dev/null || true
+          done
+        done
+        # On musl the loader *is* the C library — one file under two names. The
+        # libc.musl-* symlink cannot survive the copy, so materialise it from
+        # the loader we now hold as a real file.
+        for ld in "$BIN_DIR"/ld-musl-*.so.1; do
+          [ -f "$ld" ] || continue
+          libc="$BIN_DIR/libc.musl-${ld##*/ld-musl-}"
+          [ -f "$libc" ] || cp "$ld" "$libc"
+        done
+        rm -rf "$BIN_DIR"/src_*
         docker rm "$TMPCTR"
         chmod 755 "$BIN_DIR/pgbackrest"
         chown -R root:root "$BIN_DIR"
-        echo "Extracted pgbackrest binary and $(ls "$BIN_DIR"/lib* 2>/dev/null | wc -l) shared libraries"
+        echo "Extracted pgbackrest binary and $(ls "$BIN_DIR"/*.so* 2>/dev/null | wc -l) shared libraries"
       fi
 
       # Verify extraction succeeded
@@ -174,31 +194,108 @@
         echo "ERROR: pgbackrest binary not found in $BIN_DIR" >&2
         exit 1
       fi
+      # Which libc did the image use? Everything downstream differs, so detect
+      # it rather than assume: an Alpine image yields ld-musl-*.so.1, a glibc
+      # one does not. This is what lets pgbackrest_image be switched between
+      # variants without touching the role.
+      ld_musl=""
+      for f in "$BIN_DIR"/ld-musl-*.so.1; do
+        [ -f "$f" ] && { ld_musl="$f"; break; }
+      done
+
       missing=""
-      for lib in libpq.so libxml2.so libssl.so libcrypto.so liblz4.so libz.so libzstd.so ld-musl; do
+      for lib in libpq.so libxml2.so libssl.so libcrypto.so liblz4.so libz.so libzstd.so; do
         ls "$BIN_DIR/${lib}"* >/dev/null 2>&1 || missing="$missing $lib"
       done
+      # The loader and the C library are only ours to ship in the musl case.
+      # A glibc build uses the db container's own, which is already there.
+      if [ -n "$ld_musl" ]; then
+        for lib in ld-musl libc.musl; do
+          ls "$BIN_DIR/${lib}"* >/dev/null 2>&1 || missing="$missing $lib"
+        done
+      fi
       if [ -n "$missing" ]; then
         echo "ERROR: missing shared libraries:$missing" >&2
         exit 1
       fi
 
-      # Create wrapper script that sets LD_LIBRARY_PATH only for pgbackrest
-      # (setting it on the container env would poison PostgreSQL's own libraries)
-      printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/usr/lib/pgbackrest-bin\nexec /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' > "$BACKUP_DIR/pgbackrest-wrapper"
+      # Create the wrapper that the db container sees as /usr/bin/pgbackrest.
+      #
+      # supabase/postgres is itself musl-based, so /lib/ld-musl-x86_64.so.1 is
+      # already there and the extracted binary execs natively — no loader to
+      # invoke by hand.
+      #
+      # The libraries do have to come from us. An inventory of the container
+      # shows it ships libssl, libcrypto, libz and libzstd but *not* libxml2,
+      # libpq, libssh2, liblz4 or libbz2, and ldd on the binary confirms it:
+      #   Error loading shared library libpq.so.5: No such file or directory
+      # so it cannot satisfy pgbackrest on its own.
+      #
+      # LD_LIBRARY_PATH rather than --library-path, and that distinction is the
+      # whole bug. --library-path is an argument to one loader invocation;
+      # LD_LIBRARY_PATH is environment, and environment is inherited. pgbackrest
+      # forks workers for backup by re-executing itself, and those children
+      # inherit this while they could never inherit a loader flag — which is why
+      # the main process worked and every forked worker died with
+      # "Error relocating ...: symbol not found".
+      printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/usr/lib/pgbackrest-bin\nexec /usr/lib/pgbackrest-bin/pgbackrest "$@"\n' \
+        > "$BACKUP_DIR/pgbackrest-wrapper"
       chmod 755 "$BACKUP_DIR/pgbackrest-wrapper"
+      [ -n "$ld_musl" ] && chmod 755 "$ld_musl"
+      echo "Wrapper execs pgbackrest directly; libraries resolve from the container."
+
+      # NOTE: do not bind-mount a loader over /lib/ld-musl-*.so.1 or write
+      # /etc/ld-musl-*.path in the db container. That was tried to make forked
+      # pgbackrest workers resolve our libraries, and it broke the container
+      # outright — start-supabase.sh failed after 11 minutes. supabase/postgres
+      # is itself musl-based (busybox ls, /sbin/nologin, an Alpine-shaped
+      # passwd), so those two files belong to the image: replacing the loader
+      # and redirecting the default search path affects every binary inside,
+      # not just pgbackrest.
 
       # Ensure pgbackrest.conf placeholder exists (backup role renders the real config)
       CONF="$BACKUP_DIR/pgbackrest.conf"
       [ -f "$CONF" ] || install -m 0640 /dev/null "$CONF"
 
-      # Fix ownership for directories that postgres (UID 100) writes to
+      # Ownership for the directories pgbackrest writes to: lock, log, spool.
+      #
+      # These matter only for archive-push, which the postmaster spawns as the
+      # postgres user — stanza-create and backup are run through docker exec as
+      # root and can write regardless, which is why they can succeed while
+      # every archive-push fails. The uid was hardcoded to 100:101, a guess
+      # about the image's internals that goes wrong silently the moment the
+      # image changes it. Ask the image instead.
+      # Do not go looking for a user called "postgres": nothing here establishes
+      # that name. supabase_admin, which appears throughout the config, is a
+      # PostgreSQL role rather than a Unix account, and the compose file sets no
+      # `user:`. The owner of PGDATA *is* the account the postmaster runs as,
+      # whatever it is called, so read that instead of guessing a name.
+      DB_IMAGE="{{ sb_db_version }}"
+      DB_CTR="supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+      pg_ids=""
+      # A running container is the most authoritative source; on a re-run it is
+      # already there. Fall back to the image, where PGDATA itself may not exist
+      # before initdb but its parent does.
+      if docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -qx "$DB_CTR"; then
+        pg_ids="$(docker exec "$DB_CTR" stat -c '%u %g' /var/lib/postgresql/data 2>/dev/null || true)"
+      fi
+      [ -n "$pg_ids" ] || pg_ids="$(docker run --rm --entrypoint stat "$DB_IMAGE" -c '%u %g' /var/lib/postgresql/data 2>/dev/null || true)"
+      [ -n "$pg_ids" ] || pg_ids="$(docker run --rm --entrypoint stat "$DB_IMAGE" -c '%u %g' /var/lib/postgresql 2>/dev/null || true)"
+      pg_uid="${pg_ids%% *}"; pg_gid="${pg_ids##* }"
+      case "$pg_uid:$pg_gid" in
+        [0-9]*:[0-9]*) ;;
+        *)
+          echo "WARNING: could not read PGDATA ownership from $DB_CTR or $DB_IMAGE; falling back to 100:101" >&2
+          pg_uid=100; pg_gid=101 ;;
+      esac
+      echo "pgbackrest work dirs will be owned by ${pg_uid}:${pg_gid} (owner of PGDATA)"
+
       mkdir -p "$BACKUP_DIR/volumes/pgbackrest/lock"
       mkdir -p "$BACKUP_DIR/volumes/pgbackrest-log"
       mkdir -p "$BACKUP_DIR/volumes/pgbackrest-spool/archive"
-      chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest"
-      chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest-log"
-      chown -R 100:101 "$BACKUP_DIR/volumes/pgbackrest-spool"
+      chown -R "$pg_uid:$pg_gid" "$BACKUP_DIR/volumes/pgbackrest"
+      chown -R "$pg_uid:$pg_gid" "$BACKUP_DIR/volumes/pgbackrest-log"
+      chown -R "$pg_uid:$pg_gid" "$BACKUP_DIR/volumes/pgbackrest-spool"
   when: backup_enabled | default(false) | bool
 
 - name: Run backup path preparation

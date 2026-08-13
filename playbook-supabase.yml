@@ -21,6 +21,13 @@
   roles:
    # ─── Always-on (prerequisites + instance contract) ───
    - docker                    # Docker Engine + Compose v2 (Debian family + Arch)
+
+   # Emitted here by setup.sh when enabled, ahead of supabase: with encryption
+   # on, supabase_data_path is the LUKS mount point, so the volume has to be
+   # mounted before Postgres initialises its data directory there.
+   # - role: luks              # At-rest disk encryption (LUKS)
+   #   when: supabase_encryption.enabled
+
    - supabase                  # Full Supabase stack
    - manifest                  # /etc/supabase/instance.json — instance contract
    - agent_access              # SSH-stdio MCP agent + info CLI
@@ -29,8 +36,6 @@
    # Enabled via config.yml (components). See docs/advanced-docs.md.
 
    # - ufw                     # Firewall — allow/deny rules per port
-   # - role: luks              # At-rest disk encryption (LUKS)
-   #   when: supabase_encryption.enabled
    # - caddy                   # Reverse proxy + automatic TLS + SSO
    # - monitor                 # Grafana + Prometheus + Loki stack
    # - fail2ban                # Brute-force protection for Postgres

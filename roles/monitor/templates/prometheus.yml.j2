@@ -17,10 +17,25 @@ scrape_configs:
     static_configs:
       - targets: [host.docker.internal:9100]
 
+  # Reached over the host gateway, not by compose DNS: postgres-exporter runs
+  # with network_mode: host, so it is not attached to this project's network and
+  # the name "postgres-exporter" does not resolve from Prometheus. This target
+  # was down for every deployment that enabled monitoring. node-exporter, which
+  # is host-networked for the same reason, was already addressed this way.
   - job_name: 'postgres-exporter'
     scrape_interval: 5s
     static_configs:
-      - targets: [postgres-exporter:9187]
-{{ '\n\n  - job_name: pgbackrest_exporter\n    scrape_interval: 60s\n    static_configs:\n      - targets: [host.docker.internal:9854]' if backup_enabled | default(false) | bool else '' }}
+      - targets: [host.docker.internal:9187]
+{% if backup_enabled | default(false) | bool %}
+
+  # By container name, not over the host gateway. The exporter publishes its
+  # port on 127.0.0.1, which Prometheus — scraping from inside a container —
+  # cannot reach: "dial tcp 172.17.0.1:9854: connect: connection refused".
+  # The backup role joins that container to this network so the name resolves.
+  - job_name: pgbackrest_exporter
+    scrape_interval: 60s
+    static_configs:
+      - targets: [supabase-pgbackrest-exporter{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}:9854]
+{% endif %}
 
 

@@ -10,9 +10,14 @@
 #                that before a user does.
 #   dispatch   — run it by hand when you want to.
 #
-# Runner coverage is Ubuntu-only: GitHub-hosted runners do not offer Debian or
-# Arch images. The README claims those as supported targets, and nothing here
-# proves it — covering them needs a self-hosted runner or a VM provider.
+# Coverage is one Ubuntu LTS, deliberately. The docker role branches on distro
+# *family* (ID_LIKE), not on individual distros, so Ubuntu exercises the same
+# apt path every Debian-based target takes — and Ubuntu LTS is what the VPS
+# hosts this is aimed at hand you by default.
+#
+# What that leaves uncovered is the Arch pacman branch. Covering it needs a
+# self-hosted runner or a VM provider; the README says so rather than implying
+# CI proves it.
 
 name: Release
 
@@ -36,13 +41,9 @@ jobs:
   # supported Ubuntu versions.
   # ───────────────────────────────────────────────────────────────────────────
   full-stack:
-    name: Full stack (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Full stack (Ubuntu LTS)
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v4
 
@@ -90,6 +91,15 @@ jobs:
           advanced:
             backup:
               repo_type: minio
+              # Production points repo_type at a remote S3, and setup.sh forces
+              # encryption on for that — so the encrypted repository is the one
+              # real deployments use, and it was the one nothing exercised. The
+              # repository type is local here because CI has no remote bucket,
+              # but the cipher path is identical: backup and restore both have
+              # to work through repo1-cipher-type/repo1-cipher-pass. An
+              # encrypted backup that cannot be restored looks exactly like one
+              # that can until the day it matters.
+              encryption: true
           YAML
 
       # Recorded rather than run plainly: the deploy is the demo. `-i 2` caps
@@ -116,6 +126,19 @@ jobs:
           done
           echo "::error::Containers did not become healthy within 15 minutes."
           sudo docker ps --format '{{.Names}}\t{{.Status}}'
+          # Name the offenders and print their healthcheck output, as the
+          # integration job does. Without it the only evidence is every
+          # container's stdout dumped by the step below, and the one line that
+          # says what actually failed is unfindable in it.
+          sudo docker ps --format '{{.Names}}\t{{.Status}}' \
+            | grep 'unhealthy\|starting' | cut -f1 \
+            | while read -r c; do
+                echo "::group::healthcheck output: $c"
+                sudo docker inspect \
+                  --format '{{range .State.Health.Log}}exit={{.ExitCode}}{{"\n"}}{{.Output}}{{end}}' \
+                  "$c" 2>/dev/null || echo "(no healthcheck defined)"
+                echo "::endgroup::"
+              done
           exit 1
 
       - name: Smoke test the API gateway
@@ -127,6 +150,57 @@ jobs:
       - name: Smoke test Grafana
         run: |
           curl -fsS http://localhost:3002/api/health | tee /dev/stderr | grep -q '"database"'
+
+      # Grafana answering says nothing about whether any metric ever arrives:
+      # every dashboard in this repo reads from Prometheus, so a target that
+      # never comes up is a monitoring stack that renders empty panels. Nothing
+      # checked that until now, and one target was addressed by a name that
+      # cannot resolve.
+      - name: Prometheus is scraping every target
+        run: |
+          cat > /tmp/targets.py <<'PY'
+          import json, sys
+          targets = json.load(sys.stdin)["data"]["activeTargets"]
+          bad = 0
+          for t in sorted(targets, key=lambda t: t["scrapeUrl"]):
+              health = t["health"]
+              if health != "up":
+                  bad += 1
+              print("  %-6s %s %s" % (health, t["scrapeUrl"], t.get("lastError", "")))
+          sys.exit(1 if bad or not targets else 0)
+          PY
+          sed -i 's/^          //' /tmp/targets.py
+          for _ in $(seq 1 12); do
+            if curl -fsS http://localhost:9090/api/v1/targets > /tmp/targets.json \
+               && python3 /tmp/targets.py < /tmp/targets.json; then
+              echo "All Prometheus targets are up."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Prometheus targets never came up (state above)."
+          exit 1
+
+      # Checked before the backup is taken, and separately from the restore.
+      # The restore drill below passes whether or not encryption is on, so on
+      # its own it would prove the pipeline works while saying nothing about
+      # whether anything was encrypted.
+      - name: The repository is configured for encryption
+        run: |
+          conf=/home/runner/backup/pgbackrest.conf
+          sudo grep -q '^repo1-cipher-type=aes-256-cbc' "$conf" || {
+            echo "::error::backup encryption never reached pgbackrest.conf."
+            sudo grep -i cipher "$conf" || echo "(no cipher settings at all)"
+            exit 1
+          }
+          # Compared, never printed — this passphrase is what makes the
+          # repository readable.
+          if sudo sed -n 's/^repo1-cipher-pass=//p' "$conf" \
+             | grep -qxE '|changeit'; then
+            echo "::error::repo1-cipher-pass is empty or still the placeholder."
+            exit 1
+          fi
+          echo "Repository uses aes-256-cbc with a generated passphrase."
 
       - name: On-demand backup
         run: sudo ansible-playbook -i localhost, -c local backup.yml -e @env/supabase.yml
@@ -144,7 +218,6 @@ jobs:
           echo "Supabase upstream under test: ${ref}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the recording
-        if: matrix.os == 'ubuntu-24.04'
         uses: actions/upload-artifact@v4
         with:
           name: install-cast
@@ -154,9 +227,24 @@ jobs:
         if: failure()
         run: |
           sudo docker ps -a --format '{{.Names}}\t{{.Status}}'
-          for c in $(sudo docker ps -aq); do
-            echo "──────── $(sudo docker inspect --format '{{.Name}}' "$c")"
-            sudo docker logs --tail 80 "$c" 2>&1 || true
+          # Dump the suspects first and only. Dumping 80 lines for every
+          # container buried the useful line under ~1200 lines of healthy
+          # startup chatter, and the diagnostics scrolled off the top.
+          suspects="$(sudo docker ps -a --format '{{.Names}}\t{{.Status}}' \
+            | grep -Ei 'unhealthy|restarting|starting|created|exited \([1-9]' | cut -f1 || true)"
+          if [ -z "$suspects" ]; then
+            echo "No container is unhealthy, restarting, exited or stuck created."
+            suspects="$(sudo docker ps -a --format '{{.Names}}')"
+            echo "Falling back to all containers, 25 lines each."
+            tail_n=25
+          else
+            echo "Containers in a bad state:"; echo "$suspects"
+            tail_n=120
+          fi
+          for c in $suspects; do
+            echo "::group::logs: $c"
+            sudo docker logs --tail "$tail_n" "$c" 2>&1 || true
+            echo "::endgroup::"
           done
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -164,11 +252,16 @@ jobs:
   # here for the first time, and a harness problem should not block a release.
   # Drop continue-on-error once this has passed once.
   # ───────────────────────────────────────────────────────────────────────────
+  # Encryption at rest is a headline claim, so this job blocks the release.
+  # It was advisory while its assertions were unproven — and they were in fact
+  # broken, checking the backing device instead of the mapping behind a
+  # `|| true`. With that fixed there is no reason for it not to count. Run the
+  # workflow manually once (workflow_dispatch) before tagging if you want to
+  # see it pass on its own before it can hold a release back.
   luks:
     name: LUKS (loopback device)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -212,9 +305,358 @@ jobs:
 
       - name: Assert the volume is encrypted and mounted
         run: |
-          sudo cryptsetup status "$(basename "${LUKS_DEV}")" || true
-          mountpoint -q /data && echo "/data is mounted."
-          sudo blkid "${LUKS_DEV}" | grep -q crypto_LUKS
+          # Every line below is a real assertion. The previous version asked
+          # for the status of "$(basename $LUKS_DEV)" — i.e. loop0 — which is
+          # the backing device, not the mapping, so it could only ever fail;
+          # the `|| true` after it meant the whole check reported success
+          # regardless. The mapping is named by luks_name in env/supabase.yml.
+          luks_name="$(grep -oP '^luks_name:\s*\K\S+' env/supabase.yml)"
+          echo "Mapping under test: ${luks_name}"
+
+          sudo blkid "${LUKS_DEV}" | grep -q crypto_LUKS \
+            || { echo "::error::${LUKS_DEV} carries no LUKS header."; exit 1; }
+
+          sudo cryptsetup status "${luks_name}" \
+            || { echo "::error::No active LUKS mapping named ${luks_name}."; exit 1; }
+
+          mountpoint -q /data \
+            || { echo "::error::/data is not a mount point."; exit 1; }
+
+          # Confirms the mapping is not merely present but usable — a mounted
+          # volume that cannot be written to would satisfy every check above.
+          sudo touch /data/.ci-write-probe \
+            || { echo "::error::/data is mounted but not writable."; exit 1; }
+          sudo rm -f /data/.ci-write-probe
+          echo "/data is encrypted, mounted and writable."
+
+      # The assertions above all pass on an empty encrypted filesystem, which
+      # is exactly what the deployment used to produce: the volume was mounted
+      # after the supabase role, so Postgres had already initialised PGDATA on
+      # the root disk in the clear and the mount hid it. What proves the
+      # ordering is that the database's own files are on the encrypted volume
+      # and the database is still running on them.
+      - name: Assert Postgres actually lives on the encrypted volume
+        run: |
+          sudo test -f /data/pgdata/PG_VERSION || {
+            echo "::error::No PGDATA on /data/pgdata — the encrypted volume was mounted over it."
+            sudo ls -la /data /data/pgdata 2>&1 || true
+            exit 1
+          }
+          echo "PGDATA is on the encrypted volume (PG_VERSION present)."
+
+          for i in $(seq 1 30); do
+            if sudo docker ps --format '{{.Names}}\t{{.Status}}' \
+               | grep -E '^supabase-db[[:space:]].*healthy' > /dev/null; then
+              echo "supabase-db is healthy on the encrypted volume."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::supabase-db never became healthy on the encrypted volume."
+          sudo docker ps -a --format '{{.Names}}\t{{.Status}}'
+          sudo docker logs --tail 80 supabase-db 2>&1 || true
+          exit 1
+
+      # This job had no log capture at all, so a deploy that ended with
+      # "container supabase-db is unhealthy" said nothing about why. The
+      # database is the thing most likely to object to a freshly formatted
+      # volume, so its own output is what matters here.
+      - name: Container logs on failure
+        if: failure()
+        run: |
+          sudo docker ps -a --format '{{.Names}}\t{{.Status}}' || true
+          echo "--- the encrypted volume ---"
+          mountpoint /data && sudo ls -la /data /data/pgdata 2>&1 || true
+          for c in supabase-db supabase-kong; do
+            echo "::group::logs: $c"
+            sudo docker logs --tail 120 "$c" 2>&1 || echo "(no such container)"
+            echo "::endgroup::"
+          done
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Caddy is the one component whose value is most visible to users — HTTPS on
+  # their domain, and SSO in front of Studio — and it was the least covered:
+  # every other job sets caddy: false. It also builds a Go binary from an
+  # unpinned xcaddy plus a third-party plugin at deploy time, so it can break
+  # with nobody touching this repo.
+  #
+  # "No public DNS" does not mean "no Caddy". ACME is the only part that needs
+  # a resolvable name, so certificates come from Caddy's own local CA
+  # (tls internal) and the CI domains are pointed at loopback. What that leaves
+  # untested is real ACME issuance, and a completed login round-trip — the
+  # assertion below is the negative one, which is the property that matters:
+  # an unauthenticated request must not reach Studio.
+  # ───────────────────────────────────────────────────────────────────────────
+  caddy:
+    name: Caddy (build, TLS, SSO gate)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      # caddy-security fetches OIDC discovery when it loads, so the provider has
+      # to answer for Caddy to start at all. A real IdP is not needed for that —
+      # nor for the gate assertion, which fires before any token exchange — so
+      # this serves a static discovery document rather than pinning yet another
+      # third-party image. Written with an explicit JSON content-type, which
+      # python -m http.server would not set for an extension-less file.
+      - name: Serve a minimal OIDC discovery document
+        run: |
+          mkdir -p /tmp/idp
+          # caddy-security fetches the provider's JWKS while provisioning and
+          # refuses to start on an empty key set — "failed to fetch jwt keys for
+          # OAuth 2.0 authorization server: no jwks keys found" — so the stub
+          # serves a real one. The key is generated here and thrown away with
+          # the runner; it signs nothing, it only has to parse as a JWK.
+          openssl genrsa -out /tmp/idp/key.pem 2048 2>/dev/null
+          openssl rsa -in /tmp/idp/key.pem -pubout -out /tmp/idp/pub.pem 2>/dev/null
+          python3 - <<'PY' > /tmp/idp/jwks.json
+          import base64, json, re, subprocess
+
+          def openssl(*args):
+              return subprocess.run(["openssl", "rsa", "-pubin", "-in",
+                                     "/tmp/idp/pub.pem", *args],
+                                    capture_output=True, text=True,
+                                    check=True).stdout
+
+          modulus = openssl("-modulus", "-noout").strip().split("=", 1)[1]
+          exponent = int(re.search(r"Exponent:\s*(\d+)", openssl("-text", "-noout")).group(1))
+
+          def b64u(raw):
+              return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+          print(json.dumps({"keys": [{
+              "kty": "RSA", "use": "sig", "alg": "RS256", "kid": "ci-test-key",
+              "n": b64u(bytes.fromhex(modulus)),
+              "e": b64u(exponent.to_bytes((exponent.bit_length() + 7) // 8, "big")),
+          }]}))
+          PY
+          python3 -c "import json,sys; k=json.load(open('/tmp/idp/jwks.json'))['keys']; sys.exit(0 if k else 'stub JWKS is empty')"
+
+          cat > /tmp/idp/serve.py <<'PY'
+          import json, http.server
+          ISSUER = "http://127.0.0.1:9999"
+          DOC = {
+              "issuer": ISSUER,
+              "authorization_endpoint": ISSUER + "/authorize",
+              "token_endpoint": ISSUER + "/token",
+              "userinfo_endpoint": ISSUER + "/userinfo",
+              "jwks_uri": ISSUER + "/jwks.json",
+              "response_types_supported": ["code"],
+              "subject_types_supported": ["public"],
+              "id_token_signing_alg_values_supported": ["RS256"],
+              "scopes_supported": ["openid", "email", "profile"],
+          }
+          with open("/tmp/idp/jwks.json") as fh:
+              JWKS = json.load(fh)
+          BODIES = {
+              "/.well-known/openid-configuration": DOC,
+              "/jwks.json": JWKS,
+          }
+          class H(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = BODIES.get(self.path)
+                  payload = json.dumps(body or {"error": "not_found"}).encode()
+                  self.send_response(200 if body else 404)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(payload)))
+                  self.end_headers()
+                  self.wfile.write(payload)
+              def log_message(self, *a):
+                  pass
+          http.server.HTTPServer(("127.0.0.1", 9999), H).serve_forever()
+          PY
+          nohup python3 /tmp/idp/serve.py >/tmp/idp/serve.log 2>&1 &
+          for _ in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:9999/.well-known/openid-configuration >/dev/null 2>&1; then
+              echo "Discovery document is being served."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::The local OIDC discovery endpoint never came up."
+          exit 1
+
+      # Caddy must resolve its own site names to answer on them, and curl must
+      # agree — otherwise the request never reaches the site block under test.
+      - name: Point the CI domains at loopback
+        run: |
+          echo "127.0.0.1 sb.ci.invalid auth.ci.invalid app.ci.invalid" \
+            | sudo tee -a /etc/hosts
+
+      - name: Write config.yml
+        run: |
+          cat > config.yml <<'YAML'
+          required:
+            deploy_user: runner
+            site_url: https://app.ci.invalid
+            api_external_url: https://sb.ci.invalid
+            supabase_domain: sb.ci.invalid
+            smtp_admin_email: ci@ci.invalid
+            smtp_host: smtp.ci.invalid
+            smtp_user: ci@ci.invalid
+            smtp_password: ci-not-a-real-password
+
+          secrets:
+            generate: true
+
+          components:
+            caddy: true       # the point of this job
+            monitor: false
+            fail2ban: false
+            backup: false
+            ufw: false        # would firewall the runner mid-job
+            luks: false
+
+          advanced:
+            caddy:
+              sso_provider: generic
+              root_domain: ci.invalid
+              base_auth_domain: auth.ci.invalid
+              sso_client_id: ci-client
+              sso_client_secret: ci-not-a-real-secret
+              sso_allow_list: "ci@ci.invalid"
+              tls_internal: true
+              # allowed_ips deliberately omitted: the deployment must be
+              # reachable, which is also the default users get.
+          YAML
+
+      - name: Write the generic OIDC endpoints into env
+        run: |
+          sed -i 's|^base_auth_url:.*|base_auth_url: http://127.0.0.1:9999/|' env/supabase.yml
+          sed -i 's|^metadata_url:.*|metadata_url: http://127.0.0.1:9999/.well-known/openid-configuration|' env/supabase.yml
+          sed -i 's|^app_url:.*|app_url: https://sb.ci.invalid|' env/supabase.yml
+
+      - name: Deploy with Caddy enabled
+        run: sudo bash setup.sh --yes
+
+      # Proves the xcaddy build produced a working binary *and* that the
+      # rendered Caddyfile is valid for the plugin set it was built with — the
+      # two things most likely to rot silently as upstream moves.
+      - name: Caddy validates its own rendered config
+        run: |
+          caddy version
+          # The Caddyfile resolves {env.JWT_SHARED_KEY} — the key that signs the
+          # SSO session tokens — and systemd supplies it from the unit file.
+          # Validating without it cannot succeed:
+          #   provision security: RawCryptoKeyStoreConfigs: failed to perform
+          #   replacement
+          # so the value is read back from the unit and the check exercises the
+          # same configuration the running service loads.
+          jwt="$(sudo systemctl show caddy -p Environment --value \
+                 | tr ' ' '\n' | sed -n 's/^JWT_SHARED_KEY=//p')"
+          if [ -z "$jwt" ] || [ "$jwt" = changeit ]; then
+            echo "::error::caddy.service exposes no generated JWT_SHARED_KEY."
+            sudo systemctl cat caddy | grep -i environment || true
+            exit 1
+          fi
+          sudo env JWT_SHARED_KEY="$jwt" \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Caddy is running
+        run: |
+          systemctl is-active --quiet caddy \
+            || { sudo journalctl -u caddy --no-pager -n 80; exit 1; }
+
+      - name: Wait for Caddy to answer on TLS
+        run: |
+          # Polled, not looked for once. systemd reports the unit ready as soon
+          # as Caddy notifies, but the local CA is provisioned in the background
+          # when the first `tls internal` certificate is needed, so a single
+          # find right after startup loses a race it cannot see.
+          root_crt=""
+          for _ in $(seq 1 30); do
+            root_crt="$(sudo find /var/lib/caddy -path '*pki*' -name root.crt 2>/dev/null | head -1)"
+            [ -n "$root_crt" ] && break
+            sleep 2
+          done
+          if [ -z "$root_crt" ]; then
+            echo "::error::Caddy's local CA root was never created."
+            echo "--- caddy data directory ---"
+            sudo find /var/lib/caddy -maxdepth 6 2>/dev/null || echo "(nothing under /var/lib/caddy)"
+            echo "--- caddy home, as systemd sees it ---"
+            getent passwd caddy
+            sudo journalctl -u caddy --no-pager -n 80
+            exit 1
+          fi
+          echo "Local CA root: $root_crt"
+          # install, not cp: cp gives the copy the source's permissions, and
+          # Caddy's root.crt is not world-readable, so the copy landed
+          # root-owned and unreadable by the user curl runs as. The handshake
+          # never started —
+          #   curl: (77) error setting certificate file: /tmp/caddy-root.crt
+          # — which looked exactly like Caddy not answering.
+          sudo install -m 0644 "$root_crt" /tmp/caddy-root.crt
+          test -r /tmp/caddy-root.crt || {
+            echo "::error::the copied CA root is not readable."; ls -l /tmp/caddy-root.crt; exit 1;
+          }
+          # curl's stderr is kept, not sent to /dev/null. Discarding it meant a
+          # failure here said only "never answered" — which cannot distinguish
+          # a refused connection from a TLS handshake failure from a name that
+          # does not resolve, and those want completely different fixes.
+          for _ in $(seq 1 30); do
+            if curl -sS --cacert /tmp/caddy-root.crt -o /dev/null \
+                 https://sb.ci.invalid/ 2>/tmp/curl.err; then
+              echo "Caddy is terminating TLS with a certificate from its own CA."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Caddy never answered on https://sb.ci.invalid/"
+          echo "--- curl said ---"
+          cat /tmp/curl.err || true
+          echo "--- verbose attempt ---"
+          curl -v --cacert /tmp/caddy-root.crt -o /dev/null https://sb.ci.invalid/ 2>&1 | tail -40 || true
+          echo "--- who is listening ---"
+          sudo ss -lntup | grep -E ':(80|443)\b' || echo "(nothing on 80/443)"
+          echo "--- name resolution ---"
+          getent hosts sb.ci.invalid || echo "(sb.ci.invalid does not resolve)"
+          # Caddy writes access logs to files, not the journal, so the journal
+          # stays silent even when requests are arriving. These say whether the
+          # request reached Caddy at all.
+          echo "--- caddy access logs ---"
+          sudo tail -n 30 /var/log/caddy/*.log 2>&1 || echo "(no access logs)"
+          sudo journalctl -u caddy --no-pager -n 40
+          exit 1
+
+      # The pair matters more than either half: an ungated route must work
+      # while the gated one must not. A blanket 403 would pass the second
+      # assertion on its own and prove nothing.
+      - name: An API route is reachable through Caddy
+        run: |
+          anon_key=$(sudo grep -oP '^sb_anon_key:\s*\K\S+' env/supabase.yml)
+          curl -fsS --cacert /tmp/caddy-root.crt \
+            -H "apikey: ${anon_key}" https://sb.ci.invalid/rest/v1/ > /dev/null
+          echo "Kong is reachable through Caddy over TLS."
+
+      - name: Studio is not reachable without authentication
+        run: |
+          code=$(curl -s -o /tmp/studio.out -w '%{http_code}' \
+                   --cacert /tmp/caddy-root.crt https://sb.ci.invalid/)
+          echo "Unauthenticated GET / returned ${code}."
+          case "$code" in
+            200)
+              echo "::error::Studio answered 200 to an unauthenticated request."
+              head -c 400 /tmp/studio.out
+              exit 1 ;;
+            30[0-9]|401|403)
+              echo "Studio is gated, as it should be." ;;
+            *)
+              echo "::error::Unexpected status ${code} — the gate cannot be confirmed."
+              head -c 400 /tmp/studio.out
+              exit 1 ;;
+          esac
 
   # ───────────────────────────────────────────────────────────────────────────
   # Turn the recorded install into an animated SVG and commit it, so the

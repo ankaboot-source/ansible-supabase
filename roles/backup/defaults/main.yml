@@ -56,6 +56,11 @@ backup_cron_dir: "/etc/cron.d"
 backup_log_dir: "/var/log/supabase-backup"
 
 # --- pgBackRest container settings ---
+# The identity inside the woblerr images. Nothing references these — the
+# exporter keeps its own uid and its own lock directory, so it never contends
+# with PostgreSQL. Pinning it to PostgreSQL's uid instead was tried and is
+# wrong: the exporter then cannot execute its own binary, which the image ships
+# owned by 2001, and it restarts forever.
 pgbackrest_uid: 2001
 pgbackrest_gid: 2001
 pgbackrest_conf_path: "/etc/pgbackrest"

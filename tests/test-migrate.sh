@@ -47,9 +47,16 @@ make_sandbox() {
 } >> "$d/stub-bin/$bin.calls"
 case "$bin" in
   psql)
-    # psql is called with -c "SELECT count(*) ...". Inspect the query to decide.
-    query="\$(printf '%s ' "\$@" | grep -oE 'SELECT count\(\*\) FROM [a-z._]+')"
-    case "\$query" in
+    # Matched against the whole argv rather than against a 'SELECT count(*)'
+    # pattern: the schema probe is not a count, so it used to fall through to
+    # the catch-all and answer "0". migrate.sh took that as a schema name and
+    # dumped --schema=0, which the pg_dump stub accepted — so the happy path
+    # asserted a migration of a schema that cannot exist.
+    argv="\$(printf '%s ' "\$@")"
+    case "\$argv" in
+      *"information_schema.schemata"*)
+        printf '%s\n' \${STUB_PSQL_SCHEMAS:-public}
+        ;;
       *"information_schema.tables"*)
         echo "\${STUB_PSQL_PUBLIC_TABLES:-0}"
         ;;
@@ -101,17 +108,80 @@ run_migrate_rc() {
 }
 
 # Fill all required fields in a config.yml with valid test values.
+# Fills every field migrate.sh requires, keyed by section, and fails loudly if
+# it misses one.
+#
+# This used to be a list of seds that matched on the *comments* in the example
+# config. When those comments were reworded and target.db_url lost its trailing
+# one, two fields silently stopped being filled — so migrate.sh refused at
+# validation and every scenario below reported its own failure message while
+# never reaching the code it names. Fourteen of them, for one drifted comment.
+#
+# The field list is now read out of migrate.sh, so adding a required field
+# breaks this helper visibly instead of quietly disarming the whole suite.
 fill_required() {
   local c="$1/env/migrate.yml"
-  sed -i 's|project_ref: changeit|project_ref: testprojref12345|' "$c"
-  sed -i 's|db_url: changeit.*# postgresql://postgres.\[ref\]:\[pwd\]@db.\[ref\].supabase.co:6543/postgres|db_url: postgresql://postgres.testprojref12345:pwd@db.testprojref12345.supabase.co:6543/postgres|' "$c"
-  sed -i 's|storage_endpoint: changeit.*# https://\[ref\].supabase.co/storage/v1|storage_endpoint: https://testprojref12345.supabase.co/storage/v1|' "$c"
-  sed -i 's|storage_access_key: changeit|storage_access_key: srcak12345|' "$c"
-  sed -i 's|storage_secret_key: changeit|storage_secret_key: srcsk12345|' "$c"
-  sed -i 's|storage_region: changeit.*# e.g. us-east-1|storage_region: us-east-1|' "$c"
-  # target defaults are fine except the changeit access/secret keys
-  sed -i 's|storage_access_key: changeit.*# from env/supabase.yml|storage_access_key: tgtak12345|' "$c"
-  sed -i 's|storage_secret_key: changeit.*# from env/supabase.yml|storage_secret_key: tgtsk12345|' "$c"
+  python3 - "$MIGRATE" "$c" <<'PY'
+import re, sys
+
+migrate, cfg = sys.argv[1], sys.argv[2]
+
+block = re.search(r'REQUIRED_FIELDS=\((.*?)\n\)', open(migrate).read(), re.S)
+if not block:
+    sys.exit("fill_required: could not find REQUIRED_FIELDS in migrate.sh")
+required = re.findall(r'"([^"]+)"', block.group(1))
+
+# Source and target must stay distinct — migrate.sh refuses when they match,
+# and TC-MIG-003/004 rewrite these exact strings to build their scenarios.
+values = {
+    "source.project_ref":        "testprojref12345",
+    "source.db_url":             "postgresql://postgres.testprojref12345:pwd"
+                                 "@db.testprojref12345.supabase.co:6543/postgres",
+    "source.storage_endpoint":   "https://testprojref12345.storage.supabase.co/storage/v1/s3",
+    "source.storage_access_key": "srcak12345",
+    "source.storage_secret_key": "srcsk12345",
+    "source.storage_region":     "us-east-1",
+    "target.db_url":             "postgresql://postgres:postgres@localhost:5432/postgres",
+    "target.storage_endpoint":   "http://localhost:8000/storage/v1/s3",
+    "target.storage_access_key": "tgtak12345",
+    "target.storage_secret_key": "tgtsk12345",
+    "target.storage_region":     "local",
+}
+
+missing = [f for f in required if f not in values]
+if missing:
+    sys.exit("fill_required: migrate.sh requires fields this helper does not "
+             "know how to fill: %s" % ", ".join(missing))
+
+section, out = None, []
+for line in open(cfg).read().split("\n"):
+    top = re.match(r"^([a-z_]+):\s*$", line)
+    if top:
+        section = top.group(1)
+    field = re.match(r"^(\s+)([a-z_]+):[ \t]*(\S*)(.*)$", line)
+    if field and section:
+        indent, key, val, rest = field.groups()
+        name = "%s.%s" % (section, key)
+        if name in required and val in ("changeit", ""):
+            line = "%s%s: %s%s" % (indent, key, values[name], rest)
+    out.append(line)
+open(cfg, "w").write("\n".join(out))
+
+# Prove the file no longer holds a placeholder for anything required, rather
+# than trusting that the rewrite above matched.
+text = open(cfg).read()
+section, seen = None, {}
+for line in text.split("\n"):
+    top = re.match(r"^([a-z_]+):\s*$", line)
+    if top:
+        section = top.group(1)
+    field = re.match(r"^\s+([a-z_]+):[ \t]*(\S*)", line)
+    if field and section:
+        seen["%s.%s" % (section, field.group(1))] = field.group(2)
+unfilled = [f for f in required if seen.get(f, "") in ("changeit", "")]
+if unfilled:
+    sys.exit("fill_required: still unset after filling: %s" % ", ".join(unfilled))
+PY
 }
 
 # ─── TC-MIG-001: Missing config file ─────────────────────────────────────────
@@ -282,30 +352,60 @@ fill_required "$d"
 run_migrate_rc "$d" --config "$d/env/migrate.yml" --yes
 # Assert: pg_dump is the only binary pointed at the source DSN
 src_dsn="db.testprojref12345.supabase.co"
-violations=0
+# Named, not counted. "1 violation(s)" says the source may have been written to
+# and gives you no way to find out which of the three checks fired.
+violations=()
 # pg_restore must never reference the source DSN
 if [[ -f "$d/stub-bin/pg_restore.calls" ]] && grep -q "$src_dsn" "$d/stub-bin/pg_restore.calls"; then
-  violations=$((violations+1))
+  violations+=("pg_restore was pointed at the source DSN")
 fi
 # rclone must use copy, not sync/move/delete
 if [[ -f "$d/stub-bin/rclone.calls" ]]; then
-  if ! grep -q "ARG copy" "$d/stub-bin/rclone.calls" \
-     || grep -qE "ARG (sync|move|delete|purge|rmdir)" "$d/stub-bin/rclone.calls"; then
-    violations=$((violations+1))
+  grep -q "ARG copy" "$d/stub-bin/rclone.calls" \
+    || violations+=("rclone ran without 'copy'")
+  if grep -qE "ARG (sync|move|delete|purge|rmdir)" "$d/stub-bin/rclone.calls"; then
+    violations+=("rclone used a mutating subcommand against the source")
   fi
 else
-  violations=$((violations+1))  # rclone wasn't called at all
+  violations+=("rclone was never called")
 fi
-# psql against source: only SELECT count(*) (preflight). But psql is only
-# called against the target in our implementation, so source DSN should never
-# appear in psql.calls.
-if [[ -f "$d/stub-bin/psql.calls" ]] && grep -q "$src_dsn" "$d/stub-bin/psql.calls"; then
-  violations=$((violations+1))
+# psql may read from the source: migrate.sh works out which schemas to dump by
+# querying information_schema. What must never happen is a write.
+#
+# This used to assert that the source DSN never appeared in psql.calls at all,
+# on the stated assumption that "psql is only called against the target in our
+# implementation". That stopped being true when schema discovery was added, and
+# the assertion was a poor guard even while it held — it would have passed just
+# as happily on a DELETE aimed at the target.
+if [[ -f "$d/stub-bin/psql.calls" ]]; then
+  bad_psql="$(python3 - "$d/stub-bin/psql.calls" "$src_dsn" <<'PY'
+import re, sys
+
+calls, src = open(sys.argv[1]).read(), sys.argv[2]
+writes = re.compile(r"\b(insert|update|delete|drop|create|alter|truncate|grant|revoke|copy)\b", re.I)
+offending = []
+for block in calls.split("CALL psql")[1:]:
+    args = re.findall(r"^  ARG (.*)$", block, re.M)
+    if not any(src in a for a in args):
+        continue
+    # Everything that is not a flag and not the DSN itself is a statement.
+    for arg in args:
+        if arg.startswith("-") or src in arg:
+            continue
+        if not re.match(r"\s*select\b", arg, re.I) or writes.search(arg):
+            offending.append(" ".join(arg.split())[:90])
+print("\n".join(offending))
+PY
+)"
+  if [[ -n "$bad_psql" ]]; then
+    violations+=("psql issued a non-read-only statement against the source: $bad_psql")
+  fi
 fi
-if [[ $violations -eq 0 ]]; then
+if [[ ${#violations[@]} -eq 0 ]]; then
   ok "no write command issued against source DSN"
 else
-  fail "read-only-source invariant violated ($violations violation(s))"
+  fail "read-only-source invariant violated (${#violations[@]} violation(s))"
+  for v in "${violations[@]}"; do echo "      - $v"; done
 fi
 
 # ─── TC-MIG-014: Storage failure is non-fatal + appears in runtime notes ──────
@@ -320,17 +420,52 @@ else
   fail "storage failure should be non-fatal (got rc=$RC)"
 fi
 
-# ─── TC-MIG-015: Missing optional schema is skipped with warning ───────────────
-echo "TC-MIG-015: missing optional schema skipped with warning"
+# ─── TC-MIG-015: Discovered schemas are dumped; a dump failure is fatal ───────
+# This used to assert that a missing 'pgsodium' schema was "skipped with a
+# warning, not fatal". migrate.sh has no such behaviour and never had: it dumps
+# every discovered schema in one pg_dump call and dies if that call fails. The
+# test could not even provoke the case, because pgsodium is one of the
+# Supabase-managed schemas the probe excludes by name, so the stub's
+# fail-on-this-schema hook never fired and the assertion failed on a message
+# nothing was ever going to print.
+#
+# What is worth pinning down is what the script really does: dump exactly the
+# schemas the source reported, and refuse to continue when that dump fails —
+# silently restoring a partial dump would be far worse than stopping.
+echo "TC-MIG-015: discovered schemas are dumped, and a dump failure is fatal"
 d="$(make_sandbox tc015)"
 cp "$d/env/migrate.example.yml" "$d/env/migrate.yml"
 fill_required "$d"
-STUB_PGDUMP_FAIL_SCHEMA=pgsodium run_migrate_rc "$d" --config "$d/env/migrate.yml" --yes
-if [[ $RC -eq 0 ]] && echo "$OUT" | grep -qi "skipping schema 'pgsodium'"; then
-  ok "missing schema skipped with warning, not fatal"
+STUB_PSQL_SCHEMAS="public app_data" run_migrate_rc "$d" --config "$d/env/migrate.yml" --yes
+if [[ $RC -eq 0 ]] \
+  && grep -q "ARG --schema=public" "$d/stub-bin/pg_dump.calls" \
+  && grep -q "ARG --schema=app_data" "$d/stub-bin/pg_dump.calls"; then
+  ok "every schema reported by the source is dumped"
 else
-  fail "missing schema should be skipped, not fatal (got rc=$RC)"
-  echo "$OUT" | tail -20
+  fail "discovered schemas were not all dumped (rc=$RC)"
+  grep "ARG --schema" "$d/stub-bin/pg_dump.calls" 2>/dev/null || echo "      (no --schema flags at all)"
+fi
+
+# The probe must exclude Supabase-managed schemas: the self-hosted stack
+# provisions those itself, and restoring the source's copy over them is how a
+# migration corrupts auth or storage.
+if grep -q "auth" "$d/stub-bin/psql.calls" \
+  && ! grep -q "ARG --schema=auth" "$d/stub-bin/pg_dump.calls"; then
+  ok "Supabase-managed schemas are excluded from the dump"
+else
+  fail "the schema probe does not exclude Supabase-managed schemas"
+fi
+
+d="$(make_sandbox tc015b)"
+cp "$d/env/migrate.example.yml" "$d/env/migrate.yml"
+fill_required "$d"
+STUB_PSQL_SCHEMAS="public app_data" STUB_PGDUMP_FAIL_SCHEMA=app_data \
+  run_migrate_rc "$d" --config "$d/env/migrate.yml" --yes
+if [[ $RC -ne 0 ]] && echo "$OUT" | grep -qi "pg_dump failed"; then
+  ok "a failing dump aborts instead of restoring a partial one"
+else
+  fail "a failing pg_dump should be fatal (got rc=$RC)"
+  echo "$OUT" | tail -10
 fi
 
 # ─── TC-MIG-016: env/migrate.example.yml is valid YAML ────────────────────────

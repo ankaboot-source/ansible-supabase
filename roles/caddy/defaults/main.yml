@@ -1,3 +1,9 @@
 ---
 go_version: "1.25.1"
 xcaddy_version: "latest"
+
+# Issue certificates from Caddy's built-in local CA instead of going to
+# Let's Encrypt. ACME needs a publicly resolvable name and inbound :80, which
+# a CI runner has neither of — this is what lets the Caddy path be exercised
+# offline. Leave false everywhere a real certificate is expected.
+caddy_tls_internal: false
