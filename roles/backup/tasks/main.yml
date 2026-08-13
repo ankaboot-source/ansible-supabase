@@ -85,6 +85,22 @@
     backup_compose_dir: "/home/{{ deploy_user }}/backup"
   register: pgbackrest_conf
 
+# Whether the monitoring stack is actually on this host, which decides if the
+# exporter joins the monitoring network. Checked here rather than trusting
+# backup_monitoring_enabled, which only says this role *would like* to publish
+# monitoring artefacts — backups without monitoring is a supported combination,
+# and joining a network that does not exist fails the compose outright.
+- name: Check whether the monitoring stack is deployed
+  ansible.builtin.stat:
+    path: "/home/{{ deploy_user }}/monitor"
+  register: monitor_dir
+  changed_when: false
+
+- name: Note whether the exporter can join the monitoring network
+  ansible.builtin.set_fact:
+    monitor_stack_deployed: >-
+      {{ (backup_monitoring_enabled | default(false) | bool) and monitor_dir.stat.exists }}
+
 # --- Render backup compose file ---
 - name: Render backup docker-compose
   template:
@@ -370,19 +386,12 @@
   when: backup_restore_drill | bool
 
 # --- Monitoring integration ---
-# backup_monitoring_enabled defaults to true and says only "this role would
-# like to publish monitoring artefacts". It says nothing about whether the
-# monitoring stack is actually deployed, so with components.monitor false the
-# two tasks below ran anyway and the deploy failed on
-# "Destination directory /home/<user>/monitor does not exist" — after the
-# backup itself had already succeeded. Backups without monitoring is a
-# supported combination, so check that the target exists rather than assume it.
-- name: Check whether the monitoring stack is deployed
-  ansible.builtin.stat:
-    path: "/home/{{ deploy_user }}/monitor"
-  register: monitor_dir
-  changed_when: false
-
+# monitor_stack_deployed is set near the top of this role, from the same stat.
+# backup_monitoring_enabled alone says only that this role *would like* to
+# publish monitoring artefacts; with components.monitor false the two tasks
+# below ran anyway and the deploy failed on "Destination directory
+# /home/<user>/monitor does not exist" — after the backup itself had already
+# succeeded. Backups without monitoring is a supported combination.
 - name: Render Prometheus alert rules
   template:
     src: prometheus-backup-alerts.yml.j2
@@ -390,7 +399,7 @@
     owner: "{{ deploy_user }}"
     group: "{{ deploy_user }}"
     mode: "0640"
-  when: backup_monitoring_enabled | bool and monitor_dir.stat.exists
+  when: monitor_stack_deployed | bool
   notify: reload prometheus
 
 - name: Render Grafana dashboard
@@ -400,7 +409,7 @@
     owner: "{{ deploy_user }}"
     group: "{{ deploy_user }}"
     mode: "0640"
-  when: backup_monitoring_enabled | bool and monitor_dir.stat.exists
+  when: monitor_stack_deployed | bool
 
 # --- Run storage + pgsodium backup once on enable ---
 - name: Run storage backup on enable

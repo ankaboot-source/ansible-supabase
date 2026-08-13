@@ -135,3 +135,10 @@ services:
     environment:
       - DATA_SOURCE_NAME=${POSTGRES_EXPORTER_CONNECTION_STRING}
     restart: always
+
+# Named explicitly so other compose projects can join it by name. Compose would
+# otherwise call it "<directory>_default", which is not something another file
+# can reference without guessing where this one was installed.
+networks:
+  default:
+    name: supabase-monitor-net

@@ -397,6 +397,11 @@ elif cfg_bool "secrets.generate"; then
   set_env_var "logflare_private_access_token" "$(gen_b64 24)"
   set_env_var "s3_protocol_access_key_id"    "$(gen_hex 16)"
   set_env_var "s3_protocol_access_key_secret" "$(gen_hex 32)"
+  # Signs the SSO session tokens Caddy issues in front of Studio. It was the
+  # one secret nobody generated: env/supabase.yml shipped a real, working key,
+  # committed and identical on every install, so anyone reading this repository
+  # could mint a valid session and walk past the SSO gate.
+  set_env_var "jwt_shared_key"               "$(gen_b64 32)"
   ok "Secrets generated and written to env/supabase.yml."
 else
   log "Using user-provided secrets from config.yml…"

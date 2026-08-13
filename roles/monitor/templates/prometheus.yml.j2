@@ -26,6 +26,16 @@ scrape_configs:
     scrape_interval: 5s
     static_configs:
       - targets: [host.docker.internal:9187]
-{{ '\n\n  - job_name: pgbackrest_exporter\n    scrape_interval: 60s\n    static_configs:\n      - targets: [host.docker.internal:9854]' if backup_enabled | default(false) | bool else '' }}
+{% if backup_enabled | default(false) | bool %}
+
+  # By container name, not over the host gateway. The exporter publishes its
+  # port on 127.0.0.1, which Prometheus — scraping from inside a container —
+  # cannot reach: "dial tcp 172.17.0.1:9854: connect: connection refused".
+  # The backup role joins that container to this network so the name resolves.
+  - job_name: pgbackrest_exporter
+    scrape_interval: 60s
+    static_configs:
+      - targets: [supabase-pgbackrest-exporter{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}:9854]
+{% endif %}
 
 

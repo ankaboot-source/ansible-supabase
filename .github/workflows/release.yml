@@ -469,7 +469,22 @@ jobs:
       - name: Caddy validates its own rendered config
         run: |
           caddy version
-          sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          # The Caddyfile resolves {env.JWT_SHARED_KEY} — the key that signs the
+          # SSO session tokens — and systemd supplies it from the unit file.
+          # Validating without it cannot succeed:
+          #   provision security: RawCryptoKeyStoreConfigs: failed to perform
+          #   replacement
+          # so the value is read back from the unit and the check exercises the
+          # same configuration the running service loads.
+          jwt="$(sudo systemctl show caddy -p Environment --value \
+                 | tr ' ' '\n' | sed -n 's/^JWT_SHARED_KEY=//p')"
+          if [ -z "$jwt" ] || [ "$jwt" = changeit ]; then
+            echo "::error::caddy.service exposes no generated JWT_SHARED_KEY."
+            sudo systemctl cat caddy | grep -i environment || true
+            exit 1
+          fi
+          sudo env JWT_SHARED_KEY="$jwt" \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
       - name: Caddy is running
         run: |

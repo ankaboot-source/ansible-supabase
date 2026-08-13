@@ -81,6 +81,21 @@
     - /var/lib/caddy/.local/share/caddy
     - /var/lib/caddy/.config/caddy
 
+# The unit exports this to Caddy, and every Caddyfile signs its SSO session
+# tokens with it. A placeholder here means the gate in front of Studio is
+# signed with a value anyone can read out of this repository, so it is refused
+# rather than deployed quietly.
+- name: Assert the SSO signing key was generated
+  ansible.builtin.assert:
+    that:
+      - jwt_shared_key | default('') | length > 0
+      - jwt_shared_key != 'changeit'
+    fail_msg: >-
+      jwt_shared_key is unset or still 'changeit'. It signs the SSO session
+      tokens that protect Studio. Run setup.sh with secrets.generate: true, or
+      generate-keys.sh, before enabling Caddy.
+    quiet: yes
+
 - name: Create Caddy systemd service
   become: true
   template:
