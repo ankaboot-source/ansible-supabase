@@ -19,14 +19,25 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting restore drill (throwaway volume:
 # Create throwaway volume
 docker volume create "$DRILL_VOL" >/dev/null
 
-# Restore into the throwaway volume (read-only repo mount, no delta, archive off)
+# Restore into the throwaway volume (no delta, archive off).
+#
+# The config is mounted outside /etc/pgbackrest and passed with --config: the
+# image's entrypoint chowns /etc/pgbackrest/pgbackrest.conf on startup and dies
+# on a read-only mount ("chown: ...: Read-only file system", exit 53). Keeping
+# it read-only elsewhere means this throwaway container cannot write to the
+# real config either.
+#
+# No lock directory from the db is mounted — /var/lib/pgbackrest is local lock
+# state, the repository is remote — and the backup network is joined because
+# the repo is reached at minio:9000.
 docker run --rm \
   --name "$DRILL_CONTAINER" \
+  --network "supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}" \
   -v "$DRILL_VOL":/var/lib/postgresql/data \
-  -v "$BACKUP_DIR/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" \
-  -v "$BACKUP_DIR/volumes/pgbackrest:/var/lib/pgbackrest:ro" \
+  -v "$BACKUP_DIR/pgbackrest.conf:/tmp/pgbackrest.conf:ro" \
   "$PGBR_IMAGE" \
-  pgbackrest --stanza="$STANZA" --no-delta --archive-mode=off \
+  pgbackrest --config=/tmp/pgbackrest.conf \
+    --stanza="$STANZA" --no-delta --archive-mode=off \
     --target-timeline=current --log-level-console=info restore
 rc=$?
 if [ $rc -ne 0 ]; then

@@ -57,9 +57,10 @@
         --name {{ drill_container }}
         --network {{ backup_network }}
         -v {{ drill_vol }}:/var/lib/postgresql/data
-        -v {{ backup_compose_dir }}/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+        -v {{ backup_compose_dir }}/pgbackrest.conf:/tmp/pgbackrest.conf:ro
         {{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}
-        pgbackrest --stanza={{ backup_stanza_name | default('main') }}
+        pgbackrest --config=/tmp/pgbackrest.conf
+        --stanza={{ backup_stanza_name | default('main') }}
         --no-delta --archive-mode=off
         --target-timeline=current --log-level-console=info restore
       register: restore_result
