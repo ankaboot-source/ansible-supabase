@@ -49,11 +49,16 @@
     # owned by postgres. Give the volume to postgres first and restore as
     # postgres, so the current user, the path owner and the manifest agree.
     - name: Give the throwaway volume to postgres before restoring
+      # --entrypoint is required, not decorative: the image's entrypoint drops
+      # privileges before running the command, so chown executed as the image's
+      # own uid and failed with "chown: /data: Operation not permitted" even
+      # under --user 0:0. Bypassing it runs chown as root, which is the point.
       command: >
         docker run --rm --user 0:0
+        --entrypoint chown
         -v {{ drill_vol }}:/data
         {{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}
-        chown 100:101 /data
+        100:101 /data
       changed_when: true
 
     # No lock directory from the db is mounted. /var/lib/pgbackrest holds only

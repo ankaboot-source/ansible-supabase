@@ -22,8 +22,10 @@ docker volume create "$DRILL_VOL" >/dev/null
 # A new volume belongs to root; pgBackRest refuses to restore into a path not
 # owned by the user running it, and running as root does not satisfy it either
 # because the manifest records the files as postgres. Align all three first.
-docker run --rm --user 0:0 -v "$DRILL_VOL":/data "$PGBR_IMAGE" \
-  chown 100:101 /data
+# --entrypoint bypasses the image's privilege drop; without it chown runs as
+# the image's uid and fails with "Operation not permitted" even under --user 0.
+docker run --rm --user 0:0 --entrypoint chown \
+  -v "$DRILL_VOL":/data "$PGBR_IMAGE" 100:101 /data
 
 # Restore into the throwaway volume (no delta, archive off).
 #
