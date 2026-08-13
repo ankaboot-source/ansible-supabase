@@ -117,6 +117,19 @@ jobs:
           done
           echo "::error::Containers did not become healthy within 15 minutes."
           sudo docker ps --format '{{.Names}}\t{{.Status}}'
+          # Name the offenders and print their healthcheck output, as the
+          # integration job does. Without it the only evidence is every
+          # container's stdout dumped by the step below, and the one line that
+          # says what actually failed is unfindable in it.
+          sudo docker ps --format '{{.Names}}\t{{.Status}}' \
+            | grep 'unhealthy\|starting' | cut -f1 \
+            | while read -r c; do
+                echo "::group::healthcheck output: $c"
+                sudo docker inspect \
+                  --format '{{range .State.Health.Log}}exit={{.ExitCode}}{{"\n"}}{{.Output}}{{end}}' \
+                  "$c" 2>/dev/null || echo "(no healthcheck defined)"
+                echo "::endgroup::"
+              done
           exit 1
 
       - name: Smoke test the API gateway
@@ -128,6 +141,36 @@ jobs:
       - name: Smoke test Grafana
         run: |
           curl -fsS http://localhost:3002/api/health | tee /dev/stderr | grep -q '"database"'
+
+      # Grafana answering says nothing about whether any metric ever arrives:
+      # every dashboard in this repo reads from Prometheus, so a target that
+      # never comes up is a monitoring stack that renders empty panels. Nothing
+      # checked that until now, and one target was addressed by a name that
+      # cannot resolve.
+      - name: Prometheus is scraping every target
+        run: |
+          cat > /tmp/targets.py <<'PY'
+          import json, sys
+          targets = json.load(sys.stdin)["data"]["activeTargets"]
+          bad = 0
+          for t in sorted(targets, key=lambda t: t["scrapeUrl"]):
+              health = t["health"]
+              if health != "up":
+                  bad += 1
+              print("  %-6s %s %s" % (health, t["scrapeUrl"], t.get("lastError", "")))
+          sys.exit(1 if bad or not targets else 0)
+          PY
+          sed -i 's/^          //' /tmp/targets.py
+          for _ in $(seq 1 12); do
+            if curl -fsS http://localhost:9090/api/v1/targets > /tmp/targets.json \
+               && python3 /tmp/targets.py < /tmp/targets.json; then
+              echo "All Prometheus targets are up."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Prometheus targets never came up (state above)."
+          exit 1
 
       - name: On-demand backup
         run: sudo ansible-playbook -i localhost, -c local backup.yml -e @env/supabase.yml
@@ -154,9 +197,24 @@ jobs:
         if: failure()
         run: |
           sudo docker ps -a --format '{{.Names}}\t{{.Status}}'
-          for c in $(sudo docker ps -aq); do
-            echo "──────── $(sudo docker inspect --format '{{.Name}}' "$c")"
-            sudo docker logs --tail 80 "$c" 2>&1 || true
+          # Dump the suspects first and only. Dumping 80 lines for every
+          # container buried the useful line under ~1200 lines of healthy
+          # startup chatter, and the diagnostics scrolled off the top.
+          suspects="$(sudo docker ps -a --format '{{.Names}}\t{{.Status}}' \
+            | grep -Ei 'unhealthy|restarting|starting|created|exited \([1-9]' | cut -f1 || true)"
+          if [ -z "$suspects" ]; then
+            echo "No container is unhealthy, restarting, exited or stuck created."
+            suspects="$(sudo docker ps -a --format '{{.Names}}')"
+            echo "Falling back to all containers, 25 lines each."
+            tail_n=25
+          else
+            echo "Containers in a bad state:"; echo "$suspects"
+            tail_n=120
+          fi
+          for c in $suspects; do
+            echo "::group::logs: $c"
+            sudo docker logs --tail "$tail_n" "$c" 2>&1 || true
+            echo "::endgroup::"
           done
 
   # ───────────────────────────────────────────────────────────────────────────

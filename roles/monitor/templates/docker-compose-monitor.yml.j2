@@ -104,7 +104,16 @@ services:
 
   # cAdvisor for exporting containers metrics
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
+    # Pinned: the image's healthcheck mechanism changed between releases (v0.55
+    # reads CADVISOR_HEALTHCHECK_URL, later builds parse -port out of
+    # /proc/1/cmdline), and :latest let that flip under us without a commit.
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    environment:
+      # cAdvisor is moved off its default port below, but the image's
+      # healthcheck keeps probing http://localhost:8080/healthz, so nothing ever
+      # answers it: the container reported "unhealthy" forever while serving
+      # metrics perfectly well on 7070. It has to be told where we put it.
+      - CADVISOR_HEALTHCHECK_URL=http://localhost:7070/healthz
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:rw
