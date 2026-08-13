@@ -60,7 +60,11 @@ fi
 # connections without needing the original password.
 docker run -d --rm \
   --name "${DRILL_CONTAINER}-pg" \
+  --network "supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}" \
   -e POSTGRES_HOST_AUTH_METHOD=trust \
+  -v "$BACKUP_DIR/pgbackrest-wrapper:/usr/bin/pgbackrest:ro" \
+  -v "$BACKUP_DIR/pgbackrest-bin:/usr/lib/pgbackrest-bin:ro" \
+  -v "$BACKUP_DIR/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" \
   -p 127.0.0.1:{{ backup_drill_pg_port | default('5433') }}:5432 \
   -v "$DRILL_VOL":/var/lib/postgresql/data \
   "$PG_IMAGE" \

@@ -87,12 +87,23 @@
     # only evidence of why it stopped was "No such container". It is removed
     # explicitly in cleanup instead.
     - name: Start read-only Postgres on side port
+      # Recovery needs to replay WAL to reach consistency, and PostgreSQL fetches
+      # it with restore_command — which pgBackRest wrote as a call to
+      # `pgbackrest`. Without it the startup aborts:
+      #   sh: pgbackrest: not found
+      #   FATAL: could not restore file "0000...000B" from archive: command not found
+      # This container runs the same image as supabase-db, so it gets the same
+      # pgbackrest mounts and the backup network to reach the repository.
       command: >
         docker run -d
         --name {{ drill_container }}-pg
+        --network {{ backup_network }}
         -e POSTGRES_HOST_AUTH_METHOD=trust
         -p 127.0.0.1:{{ drill_pg_port }}:5432
         -v {{ drill_vol }}:/var/lib/postgresql/data
+        -v {{ backup_compose_dir }}/pgbackrest-wrapper:/usr/bin/pgbackrest:ro
+        -v {{ backup_compose_dir }}/pgbackrest-bin:/usr/lib/pgbackrest-bin:ro
+        -v {{ backup_compose_dir }}/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
         {{ sb_db_version | default('supabase/postgres:17.6.1.136') }}
         -c archive_mode=off
       changed_when: true
