@@ -592,15 +592,33 @@ jobs:
           fi
           echo "Local CA root: $root_crt"
           sudo cp "$root_crt" /tmp/caddy-root.crt
+          # curl's stderr is kept, not sent to /dev/null. Discarding it meant a
+          # failure here said only "never answered" — which cannot distinguish
+          # a refused connection from a TLS handshake failure from a name that
+          # does not resolve, and those want completely different fixes.
           for _ in $(seq 1 30); do
-            if curl -sS --cacert /tmp/caddy-root.crt -o /dev/null https://sb.ci.invalid/ 2>/dev/null; then
+            if curl -sS --cacert /tmp/caddy-root.crt -o /dev/null \
+                 https://sb.ci.invalid/ 2>/tmp/curl.err; then
               echo "Caddy is terminating TLS with a certificate from its own CA."
               exit 0
             fi
             sleep 2
           done
           echo "::error::Caddy never answered on https://sb.ci.invalid/"
-          sudo journalctl -u caddy --no-pager -n 80
+          echo "--- curl said ---"
+          cat /tmp/curl.err || true
+          echo "--- verbose attempt ---"
+          curl -v --cacert /tmp/caddy-root.crt -o /dev/null https://sb.ci.invalid/ 2>&1 | tail -40 || true
+          echo "--- who is listening ---"
+          sudo ss -lntup | grep -E ':(80|443)\b' || echo "(nothing on 80/443)"
+          echo "--- name resolution ---"
+          getent hosts sb.ci.invalid || echo "(sb.ci.invalid does not resolve)"
+          # Caddy writes access logs to files, not the journal, so the journal
+          # stays silent even when requests are arriving. These say whether the
+          # request reached Caddy at all.
+          echo "--- caddy access logs ---"
+          sudo tail -n 30 /var/log/caddy/*.log 2>&1 || echo "(no access logs)"
+          sudo journalctl -u caddy --no-pager -n 40
           exit 1
 
       # The pair matters more than either half: an ungated route must work
