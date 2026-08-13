@@ -675,7 +675,21 @@ main_play_header = """
   roles:
    # ─── Always-on (prerequisites + instance contract) ───
    - docker                    # Docker Engine + Compose v2 (Debian family + Arch)
-   - supabase                  # Full Supabase stack
+"""
+
+# LUKS is emitted before supabase, not with the other advanced roles. When
+# encryption is on, supabase_data_path *is* luks_mount_point, so running it
+# afterwards meant the supabase role created that directory on the root disk,
+# Postgres initialised its PGDATA there in the clear, and the encrypted volume
+# was then mounted on top — hiding a live database behind an empty filesystem
+# and leaving its data unencrypted on the disk underneath. The volume has to
+# exist and be mounted before anything writes to it.
+early_role_lines = []
+if components.get("luks"):
+    early_role_lines.append("   - role: luks              # At-rest disk encryption (LUKS)")
+    early_role_lines.append("     when: supabase_encryption.enabled")
+
+main_play_body = """   - supabase                  # Full Supabase stack
    - manifest                  # /etc/supabase/instance.json — instance contract
    - agent_access              # SSH-stdio MCP agent + info CLI
 
@@ -686,9 +700,6 @@ main_play_header = """
 role_lines = []
 if components.get("ufw"):
     role_lines.append("   - ufw                     # Firewall — allow/deny rules per port")
-if components.get("luks"):
-    role_lines.append("   - role: luks              # At-rest disk encryption (LUKS)")
-    role_lines.append("     when: supabase_encryption.enabled")
 if components.get("caddy"):
     role_lines.append("   - caddy                   # Reverse proxy + automatic TLS + SSO")
 if components.get("monitor"):
@@ -699,6 +710,9 @@ if components.get("backup"):
     role_lines.append("   - backup                  # Automated backups + PITR (pgBackRest)")
 
 content = bootstrap_play + main_play_header
+if early_role_lines:
+    content += "\n".join(early_role_lines) + "\n"
+content += main_play_body
 if role_lines:
     content += "\n".join(role_lines) + "\n"
 else:

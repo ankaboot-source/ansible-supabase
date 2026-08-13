@@ -299,6 +299,34 @@ jobs:
           sudo rm -f /data/.ci-write-probe
           echo "/data is encrypted, mounted and writable."
 
+      # The assertions above all pass on an empty encrypted filesystem, which
+      # is exactly what the deployment used to produce: the volume was mounted
+      # after the supabase role, so Postgres had already initialised PGDATA on
+      # the root disk in the clear and the mount hid it. What proves the
+      # ordering is that the database's own files are on the encrypted volume
+      # and the database is still running on them.
+      - name: Assert Postgres actually lives on the encrypted volume
+        run: |
+          sudo test -f /data/PG_VERSION || {
+            echo "::error::No PGDATA on /data — the encrypted volume was mounted over it."
+            sudo ls -la /data || true
+            exit 1
+          }
+          echo "PGDATA is on the encrypted volume (PG_VERSION present)."
+
+          for i in $(seq 1 30); do
+            if sudo docker ps --format '{{.Names}}\t{{.Status}}' \
+               | grep -E '^supabase-db[[:space:]].*healthy' > /dev/null; then
+              echo "supabase-db is healthy on the encrypted volume."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::supabase-db never became healthy on the encrypted volume."
+          sudo docker ps -a --format '{{.Names}}\t{{.Status}}'
+          sudo docker logs --tail 80 supabase-db 2>&1 || true
+          exit 1
+
   # ───────────────────────────────────────────────────────────────────────────
   # Caddy is the one component whose value is most visible to users — HTTPS on
   # their domain, and SSO in front of Studio — and it was the least covered:

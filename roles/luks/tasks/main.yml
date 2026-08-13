@@ -82,7 +82,11 @@
       type: luks2
       cipher: aes-xts-plain64
       hash: sha256
-      key_size: 512
+      # keysize, not key_size — the module rejects the latter outright
+      # ("Unsupported parameters ... key_size"), so no install could ever get
+      # past this task. In bits; 512 is the standard for aes-xts-plain64, which
+      # splits it into a 256-bit encryption key and a 256-bit tweak key.
+      keysize: 512
     when: is_luks.rc != 0
 
   - name: Open LUKS volume
@@ -117,11 +121,17 @@
       fstype: "{{ luks_filesystem }}"
       state: mounted
 
+  # 100:101 is the postgres account inside the supabase-db image, and the mount
+  # point is bind-mounted straight in as PGDATA, so the numbers have to match
+  # what the container expects. This said 105:106, which belongs to no account
+  # in particular — uids in that range are handed out in whatever order system
+  # packages happen to be installed — and disagreed with the 100:101 the
+  # supabase role sets on the very same directory.
   - name: Ensure correct ownership on mounted volume
     file:
       path: "{{ luks_mount_point }}"
-      owner: 105
-      group: 106
+      owner: 100
+      group: 101
 
   ## Configure automatic LUKS unlocking
 

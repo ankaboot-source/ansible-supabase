@@ -395,10 +395,17 @@ fi
 
 # ─── TC-BACKUP-039: db container mounts pgbackrest binary + config (not spool) ──
 echo "TC-BACKUP-039: db container mounts pgbackrest binary + config (not spool)"
-if grep -q "/usr/bin/pgbackrest:/usr/bin/pgbackrest:ro" "$COMPOSE" \
+# The host's pgbackrest binary is no longer bind-mounted straight onto
+# /usr/bin/pgbackrest. It cannot be: the binary needs shared libraries the db
+# image does not carry, so what goes there is a wrapper that exports
+# LD_LIBRARY_PATH and execs the real binary out of /usr/lib/pgbackrest-bin.
+# Both halves are asserted — a wrapper without its library directory is exactly
+# the state in which archive-push fails with "not found".
+if grep -q "pgbackrest-wrapper:/usr/bin/pgbackrest:ro" "$COMPOSE" \
+  && grep -q "pgbackrest-bin:/usr/lib/pgbackrest-bin:ro" "$COMPOSE" \
   && grep -q "pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro" "$COMPOSE" \
   && ! grep -q "backup_spool_host_path" "$COMPOSE"; then
-  ok "db container mounts pgbackrest binary + config, no spool"
+  ok "db container mounts pgbackrest wrapper + libs + config, no spool"
 else
   fail "db container missing pgbackrest mounts or still has spool mount"
 fi
