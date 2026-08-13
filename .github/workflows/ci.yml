@@ -85,16 +85,18 @@ jobs:
   # Hermetic shell-level tests. No Docker, no Ansible — the deploy step is
   # stubbed inside the test harness.
   #
-  # Two of the three suites are red on main today, so they run advisory rather
-  # than blocking. Their baselines are asserted below: the counts may improve,
-  # never regress. Tighten each one to a plain `bash tests/...` gate as it
-  # reaches zero failures.
+  # All three suites are green and all three block. They used to run advisory
+  # against baselines of 1 and 14 failures; both baselines were tests that had
+  # drifted from the code rather than defects in it, and both are gone:
   #
-  #   test-backup.sh   1 failure  — TC-BACKUP-039 (db container pgbackrest mounts)
-  #   test-migrate.sh  14 failures — assertion text drifted from migrate.sh's
-  #                                  actual messages. Exit codes are correct
-  #                                  (the script does refuse), so the suite can
-  #                                  no longer prove *why* it refused.
+  #   test-backup.sh   asserted the db container bind-mounts the pgbackrest
+  #                    binary onto /usr/bin/pgbackrest. It mounts a wrapper
+  #                    there instead, because the binary needs libraries the
+  #                    image does not carry.
+  #   test-migrate.sh  filled the sandbox config by matching on the example
+  #                    file's *comments*. Two were reworded, two required
+  #                    fields silently stopped being filled, and every scenario
+  #                    died at validation without reaching what it tested.
   # ───────────────────────────────────────────────────────────────────────────
   unit:
     name: Unit tests
@@ -106,27 +108,11 @@ jobs:
       - name: setup.sh
         run: bash tests/test-setup.sh
 
-      - name: backup role (baseline 1 failure)
-        run: |
-          bash tests/test-backup.sh | tee /tmp/backup.log || true
-          failures=$(grep -oP 'FAIL:\s*\K[0-9]+' /tmp/backup.log | tail -1)
-          echo "test-backup.sh failures: ${failures} (baseline 1)" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "${failures:-99}" -gt 1 ]; then
-            echo "::error::Regression — was 1 failure, now ${failures}."
-            exit 1
-          fi
+      - name: backup role
+        run: bash tests/test-backup.sh
 
-      - name: migrate.sh (baseline 14 failures)
-        run: |
-          bash tests/test-migrate.sh | tee /tmp/migrate.log || true
-          failures=$(grep -oP 'Results: [0-9]+ passed, \K[0-9]+' /tmp/migrate.log | tail -1)
-          echo "test-migrate.sh failures: ${failures} (baseline 14)" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "${failures:-99}" -gt 14 ]; then
-            echo "::error::Regression — was 14 failures, now ${failures}."
-            exit 1
-          fi
+      - name: migrate.sh
+        run: bash tests/test-migrate.sh
 
   # ───────────────────────────────────────────────────────────────────────────
   # Real deployment on the runner itself. The GitHub-hosted runner is a

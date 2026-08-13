@@ -47,9 +47,16 @@ make_sandbox() {
 } >> "$d/stub-bin/$bin.calls"
 case "$bin" in
   psql)
-    # psql is called with -c "SELECT count(*) ...". Inspect the query to decide.
-    query="\$(printf '%s ' "\$@" | grep -oE 'SELECT count\(\*\) FROM [a-z._]+')"
-    case "\$query" in
+    # Matched against the whole argv rather than against a 'SELECT count(*)'
+    # pattern: the schema probe is not a count, so it used to fall through to
+    # the catch-all and answer "0". migrate.sh took that as a schema name and
+    # dumped --schema=0, which the pg_dump stub accepted — so the happy path
+    # asserted a migration of a schema that cannot exist.
+    argv="\$(printf '%s ' "\$@")"
+    case "\$argv" in
+      *"information_schema.schemata"*)
+        printf '%s\n' \${STUB_PSQL_SCHEMAS:-public}
+        ;;
       *"information_schema.tables"*)
         echo "\${STUB_PSQL_PUBLIC_TABLES:-0}"
         ;;
@@ -413,17 +420,52 @@ else
   fail "storage failure should be non-fatal (got rc=$RC)"
 fi
 
-# ─── TC-MIG-015: Missing optional schema is skipped with warning ───────────────
-echo "TC-MIG-015: missing optional schema skipped with warning"
+# ─── TC-MIG-015: Discovered schemas are dumped; a dump failure is fatal ───────
+# This used to assert that a missing 'pgsodium' schema was "skipped with a
+# warning, not fatal". migrate.sh has no such behaviour and never had: it dumps
+# every discovered schema in one pg_dump call and dies if that call fails. The
+# test could not even provoke the case, because pgsodium is one of the
+# Supabase-managed schemas the probe excludes by name, so the stub's
+# fail-on-this-schema hook never fired and the assertion failed on a message
+# nothing was ever going to print.
+#
+# What is worth pinning down is what the script really does: dump exactly the
+# schemas the source reported, and refuse to continue when that dump fails —
+# silently restoring a partial dump would be far worse than stopping.
+echo "TC-MIG-015: discovered schemas are dumped, and a dump failure is fatal"
 d="$(make_sandbox tc015)"
 cp "$d/env/migrate.example.yml" "$d/env/migrate.yml"
 fill_required "$d"
-STUB_PGDUMP_FAIL_SCHEMA=pgsodium run_migrate_rc "$d" --config "$d/env/migrate.yml" --yes
-if [[ $RC -eq 0 ]] && echo "$OUT" | grep -qi "skipping schema 'pgsodium'"; then
-  ok "missing schema skipped with warning, not fatal"
+STUB_PSQL_SCHEMAS="public app_data" run_migrate_rc "$d" --config "$d/env/migrate.yml" --yes
+if [[ $RC -eq 0 ]] \
+  && grep -q "ARG --schema=public" "$d/stub-bin/pg_dump.calls" \
+  && grep -q "ARG --schema=app_data" "$d/stub-bin/pg_dump.calls"; then
+  ok "every schema reported by the source is dumped"
 else
-  fail "missing schema should be skipped, not fatal (got rc=$RC)"
-  echo "$OUT" | tail -20
+  fail "discovered schemas were not all dumped (rc=$RC)"
+  grep "ARG --schema" "$d/stub-bin/pg_dump.calls" 2>/dev/null || echo "      (no --schema flags at all)"
+fi
+
+# The probe must exclude Supabase-managed schemas: the self-hosted stack
+# provisions those itself, and restoring the source's copy over them is how a
+# migration corrupts auth or storage.
+if grep -q "auth" "$d/stub-bin/psql.calls" \
+  && ! grep -q "ARG --schema=auth" "$d/stub-bin/pg_dump.calls"; then
+  ok "Supabase-managed schemas are excluded from the dump"
+else
+  fail "the schema probe does not exclude Supabase-managed schemas"
+fi
+
+d="$(make_sandbox tc015b)"
+cp "$d/env/migrate.example.yml" "$d/env/migrate.yml"
+fill_required "$d"
+STUB_PSQL_SCHEMAS="public app_data" STUB_PGDUMP_FAIL_SCHEMA=app_data \
+  run_migrate_rc "$d" --config "$d/env/migrate.yml" --yes
+if [[ $RC -ne 0 ]] && echo "$OUT" | grep -qi "pg_dump failed"; then
+  ok "a failing dump aborts instead of restoring a partial one"
+else
+  fail "a failing pg_dump should be fatal (got rc=$RC)"
+  echo "$OUT" | tail -10
 fi
 
 # ─── TC-MIG-016: env/migrate.example.yml is valid YAML ────────────────────────
