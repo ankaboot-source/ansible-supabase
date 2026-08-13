@@ -41,11 +41,12 @@ docker run --rm --user 0:0 --entrypoint chown \
 docker run --rm \
   --name "$DRILL_CONTAINER" \
   --user 100:101 \
+  --entrypoint pgbackrest \
   --network "supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}" \
   -v "$DRILL_VOL":/var/lib/postgresql/data \
   -v "$BACKUP_DIR/pgbackrest.conf:/tmp/pgbackrest.conf:ro" \
   "$PGBR_IMAGE" \
-  pgbackrest --config=/tmp/pgbackrest.conf \
+  --config=/tmp/pgbackrest.conf \
     --stanza="$STANZA" --no-delta --archive-mode=off \
     --target-timeline=current --log-level-console=info restore
 rc=$?
