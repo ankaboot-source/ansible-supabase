@@ -147,7 +147,11 @@
       line: "{{ luks_name }} UUID={{ device_uuid.stdout }} {{ luks_key_file }} luks"
       create: true
       mode: '0644'
-    notify: update initramfs
+    # Matches the handler's name exactly. Ansible compares these case-sensitively
+    # and fails the play outright when nothing matches — "The requested handler
+    # 'update initramfs' was not found" — which is where the role stopped, after
+    # the volume had already been formatted, opened and mounted.
+    notify: Update initramfs
 
   - name: Configure fstab entries
     ansible.posix.mount:

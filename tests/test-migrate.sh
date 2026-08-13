@@ -101,17 +101,80 @@ run_migrate_rc() {
 }
 
 # Fill all required fields in a config.yml with valid test values.
+# Fills every field migrate.sh requires, keyed by section, and fails loudly if
+# it misses one.
+#
+# This used to be a list of seds that matched on the *comments* in the example
+# config. When those comments were reworded and target.db_url lost its trailing
+# one, two fields silently stopped being filled — so migrate.sh refused at
+# validation and every scenario below reported its own failure message while
+# never reaching the code it names. Fourteen of them, for one drifted comment.
+#
+# The field list is now read out of migrate.sh, so adding a required field
+# breaks this helper visibly instead of quietly disarming the whole suite.
 fill_required() {
   local c="$1/env/migrate.yml"
-  sed -i 's|project_ref: changeit|project_ref: testprojref12345|' "$c"
-  sed -i 's|db_url: changeit.*# postgresql://postgres.\[ref\]:\[pwd\]@db.\[ref\].supabase.co:6543/postgres|db_url: postgresql://postgres.testprojref12345:pwd@db.testprojref12345.supabase.co:6543/postgres|' "$c"
-  sed -i 's|storage_endpoint: changeit.*# https://\[ref\].supabase.co/storage/v1|storage_endpoint: https://testprojref12345.supabase.co/storage/v1|' "$c"
-  sed -i 's|storage_access_key: changeit|storage_access_key: srcak12345|' "$c"
-  sed -i 's|storage_secret_key: changeit|storage_secret_key: srcsk12345|' "$c"
-  sed -i 's|storage_region: changeit.*# e.g. us-east-1|storage_region: us-east-1|' "$c"
-  # target defaults are fine except the changeit access/secret keys
-  sed -i 's|storage_access_key: changeit.*# from env/supabase.yml|storage_access_key: tgtak12345|' "$c"
-  sed -i 's|storage_secret_key: changeit.*# from env/supabase.yml|storage_secret_key: tgtsk12345|' "$c"
+  python3 - "$MIGRATE" "$c" <<'PY'
+import re, sys
+
+migrate, cfg = sys.argv[1], sys.argv[2]
+
+block = re.search(r'REQUIRED_FIELDS=\((.*?)\n\)', open(migrate).read(), re.S)
+if not block:
+    sys.exit("fill_required: could not find REQUIRED_FIELDS in migrate.sh")
+required = re.findall(r'"([^"]+)"', block.group(1))
+
+# Source and target must stay distinct — migrate.sh refuses when they match,
+# and TC-MIG-003/004 rewrite these exact strings to build their scenarios.
+values = {
+    "source.project_ref":        "testprojref12345",
+    "source.db_url":             "postgresql://postgres.testprojref12345:pwd"
+                                 "@db.testprojref12345.supabase.co:6543/postgres",
+    "source.storage_endpoint":   "https://testprojref12345.storage.supabase.co/storage/v1/s3",
+    "source.storage_access_key": "srcak12345",
+    "source.storage_secret_key": "srcsk12345",
+    "source.storage_region":     "us-east-1",
+    "target.db_url":             "postgresql://postgres:postgres@localhost:5432/postgres",
+    "target.storage_endpoint":   "http://localhost:8000/storage/v1/s3",
+    "target.storage_access_key": "tgtak12345",
+    "target.storage_secret_key": "tgtsk12345",
+    "target.storage_region":     "local",
+}
+
+missing = [f for f in required if f not in values]
+if missing:
+    sys.exit("fill_required: migrate.sh requires fields this helper does not "
+             "know how to fill: %s" % ", ".join(missing))
+
+section, out = None, []
+for line in open(cfg).read().split("\n"):
+    top = re.match(r"^([a-z_]+):\s*$", line)
+    if top:
+        section = top.group(1)
+    field = re.match(r"^(\s+)([a-z_]+):[ \t]*(\S*)(.*)$", line)
+    if field and section:
+        indent, key, val, rest = field.groups()
+        name = "%s.%s" % (section, key)
+        if name in required and val in ("changeit", ""):
+            line = "%s%s: %s%s" % (indent, key, values[name], rest)
+    out.append(line)
+open(cfg, "w").write("\n".join(out))
+
+# Prove the file no longer holds a placeholder for anything required, rather
+# than trusting that the rewrite above matched.
+text = open(cfg).read()
+section, seen = None, {}
+for line in text.split("\n"):
+    top = re.match(r"^([a-z_]+):\s*$", line)
+    if top:
+        section = top.group(1)
+    field = re.match(r"^\s+([a-z_]+):[ \t]*(\S*)", line)
+    if field and section:
+        seen["%s.%s" % (section, field.group(1))] = field.group(2)
+unfilled = [f for f in required if seen.get(f, "") in ("changeit", "")]
+if unfilled:
+    sys.exit("fill_required: still unset after filling: %s" % ", ".join(unfilled))
+PY
 }
 
 # ─── TC-MIG-001: Missing config file ─────────────────────────────────────────
@@ -282,30 +345,60 @@ fill_required "$d"
 run_migrate_rc "$d" --config "$d/env/migrate.yml" --yes
 # Assert: pg_dump is the only binary pointed at the source DSN
 src_dsn="db.testprojref12345.supabase.co"
-violations=0
+# Named, not counted. "1 violation(s)" says the source may have been written to
+# and gives you no way to find out which of the three checks fired.
+violations=()
 # pg_restore must never reference the source DSN
 if [[ -f "$d/stub-bin/pg_restore.calls" ]] && grep -q "$src_dsn" "$d/stub-bin/pg_restore.calls"; then
-  violations=$((violations+1))
+  violations+=("pg_restore was pointed at the source DSN")
 fi
 # rclone must use copy, not sync/move/delete
 if [[ -f "$d/stub-bin/rclone.calls" ]]; then
-  if ! grep -q "ARG copy" "$d/stub-bin/rclone.calls" \
-     || grep -qE "ARG (sync|move|delete|purge|rmdir)" "$d/stub-bin/rclone.calls"; then
-    violations=$((violations+1))
+  grep -q "ARG copy" "$d/stub-bin/rclone.calls" \
+    || violations+=("rclone ran without 'copy'")
+  if grep -qE "ARG (sync|move|delete|purge|rmdir)" "$d/stub-bin/rclone.calls"; then
+    violations+=("rclone used a mutating subcommand against the source")
   fi
 else
-  violations=$((violations+1))  # rclone wasn't called at all
+  violations+=("rclone was never called")
 fi
-# psql against source: only SELECT count(*) (preflight). But psql is only
-# called against the target in our implementation, so source DSN should never
-# appear in psql.calls.
-if [[ -f "$d/stub-bin/psql.calls" ]] && grep -q "$src_dsn" "$d/stub-bin/psql.calls"; then
-  violations=$((violations+1))
+# psql may read from the source: migrate.sh works out which schemas to dump by
+# querying information_schema. What must never happen is a write.
+#
+# This used to assert that the source DSN never appeared in psql.calls at all,
+# on the stated assumption that "psql is only called against the target in our
+# implementation". That stopped being true when schema discovery was added, and
+# the assertion was a poor guard even while it held — it would have passed just
+# as happily on a DELETE aimed at the target.
+if [[ -f "$d/stub-bin/psql.calls" ]]; then
+  bad_psql="$(python3 - "$d/stub-bin/psql.calls" "$src_dsn" <<'PY'
+import re, sys
+
+calls, src = open(sys.argv[1]).read(), sys.argv[2]
+writes = re.compile(r"\b(insert|update|delete|drop|create|alter|truncate|grant|revoke|copy)\b", re.I)
+offending = []
+for block in calls.split("CALL psql")[1:]:
+    args = re.findall(r"^  ARG (.*)$", block, re.M)
+    if not any(src in a for a in args):
+        continue
+    # Everything that is not a flag and not the DSN itself is a statement.
+    for arg in args:
+        if arg.startswith("-") or src in arg:
+            continue
+        if not re.match(r"\s*select\b", arg, re.I) or writes.search(arg):
+            offending.append(" ".join(arg.split())[:90])
+print("\n".join(offending))
+PY
+)"
+  if [[ -n "$bad_psql" ]]; then
+    violations+=("psql issued a non-read-only statement against the source: $bad_psql")
+  fi
 fi
-if [[ $violations -eq 0 ]]; then
+if [[ ${#violations[@]} -eq 0 ]]; then
   ok "no write command issued against source DSN"
 else
-  fail "read-only-source invariant violated ($violations violation(s))"
+  fail "read-only-source invariant violated (${#violations[@]} violation(s))"
+  for v in "${violations[@]}"; do echo "      - $v"; done
 fi
 
 # ─── TC-MIG-014: Storage failure is non-fatal + appears in runtime notes ──────
