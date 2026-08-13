@@ -370,6 +370,19 @@
   when: backup_restore_drill | bool
 
 # --- Monitoring integration ---
+# backup_monitoring_enabled defaults to true and says only "this role would
+# like to publish monitoring artefacts". It says nothing about whether the
+# monitoring stack is actually deployed, so with components.monitor false the
+# two tasks below ran anyway and the deploy failed on
+# "Destination directory /home/<user>/monitor does not exist" — after the
+# backup itself had already succeeded. Backups without monitoring is a
+# supported combination, so check that the target exists rather than assume it.
+- name: Check whether the monitoring stack is deployed
+  ansible.builtin.stat:
+    path: "/home/{{ deploy_user }}/monitor"
+  register: monitor_dir
+  changed_when: false
+
 - name: Render Prometheus alert rules
   template:
     src: prometheus-backup-alerts.yml.j2
@@ -377,7 +390,7 @@
     owner: "{{ deploy_user }}"
     group: "{{ deploy_user }}"
     mode: "0640"
-  when: backup_monitoring_enabled | bool
+  when: backup_monitoring_enabled | bool and monitor_dir.stat.exists
   notify: reload prometheus
 
 - name: Render Grafana dashboard
@@ -387,7 +400,7 @@
     owner: "{{ deploy_user }}"
     group: "{{ deploy_user }}"
     mode: "0640"
-  when: backup_monitoring_enabled | bool
+  when: backup_monitoring_enabled | bool and monitor_dir.stat.exists
 
 # --- Run storage + pgsodium backup once on enable ---
 - name: Run storage backup on enable
