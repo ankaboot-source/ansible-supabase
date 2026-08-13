@@ -15,7 +15,7 @@
   become: true
   vars:
     backup_compose_dir: "/home/{{ deploy_user }}/backup"
-    pgbackrest_container: "supabase-pgbackrest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
+    pgbackrest_container: "supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
     db_container: "supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
     drill_vol: "pgbackrest-verify-{{ ansible_date_time.epoch }}"
     drill_container: "supabase-verify-restore{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"
