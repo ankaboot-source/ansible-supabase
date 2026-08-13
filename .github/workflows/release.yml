@@ -525,8 +525,26 @@ jobs:
 
       - name: Wait for Caddy to answer on TLS
         run: |
-          root_crt="$(sudo find /var/lib/caddy -path '*pki*' -name root.crt | head -1)"
-          [ -n "$root_crt" ] || { echo "::error::Caddy's local CA root was never created."; exit 1; }
+          # Polled, not looked for once. systemd reports the unit ready as soon
+          # as Caddy notifies, but the local CA is provisioned in the background
+          # when the first `tls internal` certificate is needed, so a single
+          # find right after startup loses a race it cannot see.
+          root_crt=""
+          for _ in $(seq 1 30); do
+            root_crt="$(sudo find /var/lib/caddy -path '*pki*' -name root.crt 2>/dev/null | head -1)"
+            [ -n "$root_crt" ] && break
+            sleep 2
+          done
+          if [ -z "$root_crt" ]; then
+            echo "::error::Caddy's local CA root was never created."
+            echo "--- caddy data directory ---"
+            sudo find /var/lib/caddy -maxdepth 6 2>/dev/null || echo "(nothing under /var/lib/caddy)"
+            echo "--- caddy home, as systemd sees it ---"
+            getent passwd caddy
+            sudo journalctl -u caddy --no-pager -n 80
+            exit 1
+          fi
+          echo "Local CA root: $root_crt"
           sudo cp "$root_crt" /tmp/caddy-root.crt
           for _ in $(seq 1 30); do
             if curl -sS --cacert /tmp/caddy-root.crt -o /dev/null https://sb.ci.invalid/ 2>/dev/null; then
