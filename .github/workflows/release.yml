@@ -699,3 +699,114 @@ jobs:
             git commit -m "docs(demo): refresh install recording from ${GITHUB_REF_NAME}"
             git push
           fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # The whole point of the weekly schedule is to catch upstream Supabase
+  # breaking this stack before a user does — which only works if a break is
+  # seen. Left as an Actions-tab result, it isn't: nobody watches that tab on
+  # a Monday 4am run, and a release-triggered failure is exactly as silent.
+  # This turns either into a GitHub issue instead, one that reopens itself on
+  # the next failure and closes itself on the next pass — so there is at most
+  # one open issue for this at any time, not one per broken Monday.
+  # ───────────────────────────────────────────────────────────────────────────
+  notify-failure:
+    name: Open/update an issue on failure
+    needs: [full-stack, luks, caddy]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      LABEL: release-ci-failure
+      TRIGGER: ${{ github.event_name }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      FULL_STACK_RESULT: ${{ needs.full-stack.result }}
+      LUKS_RESULT: ${{ needs.luks.result }}
+      CADDY_RESULT: ${{ needs.caddy.result }}
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const label = process.env.LABEL;
+            const results = {
+              'full-stack': process.env.FULL_STACK_RESULT,
+              luks: process.env.LUKS_RESULT,
+              caddy: process.env.CADDY_RESULT,
+            };
+            const failing = Object.entries(results)
+              .filter(([, r]) => r !== 'success')
+              .map(([name, r]) => `- **${name}**: ${r}`)
+              .join('\n');
+            const body = [
+              `Triggered by \`${process.env.TRIGGER}\`.`,
+              '',
+              failing || '(no job reported a non-success result — check the run directly)',
+              '',
+              `Run: ${process.env.RUN_URL}`,
+            ].join('\n');
+
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            });
+
+            if (open.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: open[0].number,
+                body: `Still red.\n\n${body}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Release CI is red',
+                body,
+                labels: [label],
+              });
+            }
+
+  # Mirror of notify-failure: closes whatever that job opened, the first time
+  # every job passes again. Without this an old failure issue outlives the
+  # regression that caused it and nobody can tell, from the issue tracker
+  # alone, whether it is still true.
+  notify-recovery:
+    name: Close the failure issue once green
+    needs: [full-stack, luks, caddy]
+    if: success()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      LABEL: release-ci-failure
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const label = process.env.LABEL;
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            });
+            for (const issue of open) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Green again: ${process.env.RUN_URL}`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+              });
+            }
