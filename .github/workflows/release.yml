@@ -591,7 +591,16 @@ jobs:
             exit 1
           fi
           echo "Local CA root: $root_crt"
-          sudo cp "$root_crt" /tmp/caddy-root.crt
+          # install, not cp: cp gives the copy the source's permissions, and
+          # Caddy's root.crt is not world-readable, so the copy landed
+          # root-owned and unreadable by the user curl runs as. The handshake
+          # never started —
+          #   curl: (77) error setting certificate file: /tmp/caddy-root.crt
+          # — which looked exactly like Caddy not answering.
+          sudo install -m 0644 "$root_crt" /tmp/caddy-root.crt
+          test -r /tmp/caddy-root.crt || {
+            echo "::error::the copied CA root is not readable."; ls -l /tmp/caddy-root.crt; exit 1;
+          }
           # curl's stderr is kept, not sent to /dev/null. Discarding it meant a
           # failure here said only "never answered" — which cannot distinguish
           # a refused connection from a TLS handshake failure from a name that
