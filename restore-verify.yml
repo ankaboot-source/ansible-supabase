@@ -42,25 +42,6 @@
       command: docker volume create {{ drill_vol }}
       changed_when: true
 
-    # A new docker volume belongs to root. pgBackRest refuses to restore into a
-    # path that is not owned by the user running it — "[053]: unable to restore
-    # to path ... not owned by current user" — and running the restore as root
-    # does not satisfy it either, because the manifest records the files as
-    # owned by postgres. Give the volume to postgres first and restore as
-    # postgres, so the current user, the path owner and the manifest agree.
-    - name: Give the throwaway volume to postgres before restoring
-      # --entrypoint is required, not decorative: the image's entrypoint drops
-      # privileges before running the command, so chown executed as the image's
-      # own uid and failed with "chown: /data: Operation not permitted" even
-      # under --user 0:0. Bypassing it runs chown as root, which is the point.
-      command: >
-        docker run --rm --user 0:0
-        --entrypoint chown
-        -v {{ drill_vol }}:/data
-        {{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}
-        100:101 /data
-      changed_when: true
-
     # No lock directory from the db is mounted. /var/lib/pgbackrest holds only
     # local lock state — the repository is in MinIO — so sharing the db's gains
     # nothing and cost two failures already: the exporter re-chowning it broke
@@ -75,7 +56,7 @@
         docker run --rm
         --name {{ drill_container }}
         --network {{ backup_network }}
-        --user 100:101
+        --user 0:0
         --entrypoint pgbackrest
         -v {{ drill_vol }}:/var/lib/postgresql/data
         -v {{ backup_compose_dir }}/pgbackrest.conf:/tmp/pgbackrest.conf:ro
@@ -86,6 +67,20 @@
         --target-timeline=current --log-level-console=info restore
       register: restore_result
       failed_when: restore_result.rc != 0
+
+    # Restoring as uid 100 segfaulted (rc 139): that uid has no passwd entry in
+    # the pgbackrest image, no home and no write access to its own log dir. Root
+    # is the only identity the image really supports, and a fresh volume is
+    # root-owned anyway, so the restore runs as root and the volume is handed to
+    # postgres afterwards — Postgres will not start on a PGDATA it does not own.
+    - name: Give the restored volume to postgres
+      command: >
+        docker run --rm --user 0:0
+        --entrypoint chown
+        -v {{ drill_vol }}:/data
+        {{ pgbackrest_image | default('woblerr/pgbackrest:2.58.0-alpine') }}
+        -R 100:101 /data
+      changed_when: true
 
     - name: Start read-only Postgres on side port
       command: >

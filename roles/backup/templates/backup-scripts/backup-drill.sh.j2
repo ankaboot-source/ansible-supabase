@@ -19,14 +19,6 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting restore drill (throwaway volume:
 # Create throwaway volume
 docker volume create "$DRILL_VOL" >/dev/null
 
-# A new volume belongs to root; pgBackRest refuses to restore into a path not
-# owned by the user running it, and running as root does not satisfy it either
-# because the manifest records the files as postgres. Align all three first.
-# --entrypoint bypasses the image's privilege drop; without it chown runs as
-# the image's uid and fails with "Operation not permitted" even under --user 0.
-docker run --rm --user 0:0 --entrypoint chown \
-  -v "$DRILL_VOL":/data "$PGBR_IMAGE" 100:101 /data
-
 # Restore into the throwaway volume (no delta, archive off).
 #
 # The config is mounted outside /etc/pgbackrest and passed with --config: the
@@ -40,7 +32,7 @@ docker run --rm --user 0:0 --entrypoint chown \
 # the repo is reached at minio:9000.
 docker run --rm \
   --name "$DRILL_CONTAINER" \
-  --user 100:101 \
+  --user 0:0 \
   --entrypoint pgbackrest \
   --network "supabase-backup-net{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}" \
   -v "$DRILL_VOL":/var/lib/postgresql/data \
@@ -50,6 +42,12 @@ docker run --rm \
     --stanza="$STANZA" --no-delta --archive-mode=off \
     --target-timeline=current --log-level-console=info restore
 rc=$?
+if [ $rc -eq 0 ]; then
+  # Restoring as uid 100 segfaults: no passwd entry in the image. Root is the
+  # workable identity, so hand the result to postgres before starting it.
+  docker run --rm --user 0:0 --entrypoint chown \
+    -v "$DRILL_VOL":/data "$PGBR_IMAGE" -R 100:101 /data
+fi
 if [ $rc -ne 0 ]; then
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: restore drill failed (exit $rc)" >&2
   docker volume rm "$DRILL_VOL" >/dev/null 2>&1 || true
