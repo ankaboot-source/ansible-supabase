@@ -91,6 +91,15 @@ jobs:
           advanced:
             backup:
               repo_type: minio
+              # Production points repo_type at a remote S3, and setup.sh forces
+              # encryption on for that — so the encrypted repository is the one
+              # real deployments use, and it was the one nothing exercised. The
+              # repository type is local here because CI has no remote bucket,
+              # but the cipher path is identical: backup and restore both have
+              # to work through repo1-cipher-type/repo1-cipher-pass. An
+              # encrypted backup that cannot be restored looks exactly like one
+              # that can until the day it matters.
+              encryption: true
           YAML
 
       # Recorded rather than run plainly: the deploy is the demo. `-i 2` caps
@@ -171,6 +180,27 @@ jobs:
           done
           echo "::error::Prometheus targets never came up (state above)."
           exit 1
+
+      # Checked before the backup is taken, and separately from the restore.
+      # The restore drill below passes whether or not encryption is on, so on
+      # its own it would prove the pipeline works while saying nothing about
+      # whether anything was encrypted.
+      - name: The repository is configured for encryption
+        run: |
+          conf=/home/runner/backup/pgbackrest.conf
+          sudo grep -q '^repo1-cipher-type=aes-256-cbc' "$conf" || {
+            echo "::error::backup encryption never reached pgbackrest.conf."
+            sudo grep -i cipher "$conf" || echo "(no cipher settings at all)"
+            exit 1
+          }
+          # Compared, never printed — this passphrase is what makes the
+          # repository readable.
+          if sudo sed -n 's/^repo1-cipher-pass=//p' "$conf" \
+             | grep -qxE '|changeit'; then
+            echo "::error::repo1-cipher-pass is empty or still the placeholder."
+            exit 1
+          fi
+          echo "Repository uses aes-256-cbc with a generated passphrase."
 
       - name: On-demand backup
         run: sudo ansible-playbook -i localhost, -c local backup.yml -e @env/supabase.yml
