@@ -64,7 +64,8 @@
         --config=/tmp/pgbackrest.conf
         --stanza={{ backup_stanza_name | default('main') }}
         --no-delta --archive-mode=off
-        --target-timeline=current --log-level-console=info restore
+        --type=immediate --target-action=promote
+        --log-level-console=info restore
       register: restore_result
       failed_when: restore_result.rc != 0
 

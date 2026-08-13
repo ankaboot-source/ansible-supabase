@@ -40,7 +40,8 @@ docker run --rm \
   "$PGBR_IMAGE" \
   --config=/tmp/pgbackrest.conf \
     --stanza="$STANZA" --no-delta --archive-mode=off \
-    --target-timeline=current --log-level-console=info restore
+    --type=immediate --target-action=promote \
+    --log-level-console=info restore
 rc=$?
 if [ $rc -eq 0 ]; then
   # Restoring as uid 100 segfaults: no passwd entry in the image. Root is the
