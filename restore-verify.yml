@@ -82,9 +82,12 @@
         -R 100:101 /data
       changed_when: true
 
+    # No --rm: the container vanished on exit and took its logs with it, so the
+    # only evidence of why it stopped was "No such container". It is removed
+    # explicitly in cleanup instead.
     - name: Start read-only Postgres on side port
       command: >
-        docker run -d --rm
+        docker run -d
         --name {{ drill_container }}-pg
         -e POSTGRES_HOST_AUTH_METHOD=trust
         -p 127.0.0.1:{{ drill_pg_port }}:5432
@@ -97,9 +100,25 @@
       command: docker exec {{ drill_container }}-pg pg_isready -U postgres -h localhost
       register: drill_ready
       until: drill_ready.rc == 0
-      retries: 30
+      retries: 12
       delay: 5
       changed_when: false
+      failed_when: false
+
+    - name: Show what the drill Postgres did
+      command: docker logs --tail 60 {{ drill_container }}-pg
+      register: drill_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with the drill Postgres output when it never became ready
+      fail:
+        msg: |
+          The restored Postgres never accepted connections.
+          docker logs {{ drill_container }}-pg:
+          {{ drill_logs.stdout | default('(no stdout)') }}
+          {{ drill_logs.stderr | default('') }}
+      when: drill_ready.rc != 0
 
     - name: Healthcheck — can we query the restored DB?
       command: >
@@ -123,7 +142,7 @@
           - "============================================================"
 
     - name: Cleanup drill container
-      command: docker stop {{ drill_container }}-pg
+      command: docker rm -f {{ drill_container }}-pg
       changed_when: true
       failed_when: false
 
