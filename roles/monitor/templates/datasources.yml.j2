@@ -9,6 +9,10 @@ datasources:
   type: prometheus
   access: proxy
   orgId: 1
+  # Pinned so the bundled server-stats dashboard's panel/datasource refs
+  # (which reference this exact UID) resolve on a fresh deploy. Grafana
+  # generates a random UID otherwise, and every panel shows "datasource not found".
+  uid: PBFA97CFB590B2093
   url: http://prometheus:9090
   password:
   user:
