@@ -27,6 +27,7 @@
     - { src: "dashboards.yml", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/dashboards/dashboards.yml", mode: '0664' }
     - { src: "datasources.yml", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/datasources/datasources.yml", mode: '0664' }
     - { src: "server-stats.json", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/dashboards/default/server-stats.json", mode: '0664' }
+    - { src: "pg-stats.json", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/provisioning/dashboards/default/pg-stats.json", mode: '0664' }
     - { src: "grafana.ini", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/grafana.ini", mode: '0664' }
     - { src: "home.json", dest: "/home/{{ deploy_user }}/{{ monitor_path }}/grafana/home.json", mode: '0664' }
 
