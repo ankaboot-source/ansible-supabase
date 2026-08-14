@@ -2663,7 +2663,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum by(name) (rate(container_cpu_usage_seconds_total{instance=\"165.232.74.151:7070\",name=~\".+\"}[5m])) * 100",
+          "expr": "sum by(name) (rate(container_cpu_usage_seconds_total{instance=\"cadvisor:7070\",name=~\".+\"}[5m])) * 100",
           "instant": false,
           "legendFormat": "{{name}}",
           "range": true,
