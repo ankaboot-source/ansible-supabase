@@ -1,5 +1,4 @@
-{% for project, cfg in projects.items() %}
-{% if cfg.oidc_enabled %}
+{% if projects.values() | selectattr('oidc_enabled') | list | length > 0 %}
 {
 	order authenticate before respond
 	order authorize before basicauth
@@ -41,9 +40,7 @@
 		}
 	}
 }
-{% endif %}
 
-{% if cfg.oidc_enabled %}
 https://{{ base_auth_domain }} {
 {% if caddy_tls_internal | default(false) %}
     # CI/offline mode: issue from Caddy's own local CA instead of ACME,
@@ -62,6 +59,7 @@ https://{{ base_auth_domain }} {
 }
 {% endif %}
 
+{% for project, cfg in projects.items() %}
 https://{{ cfg.domain }} {
 {% if caddy_tls_internal | default(false) %}
     # CI/offline mode: issue from Caddy's own local CA instead of ACME,
@@ -86,7 +84,7 @@ https://{{ cfg.domain }} {
 
         handle @allowedIPs {
     {% endif %}
-    {% for upstream in cfg.upstreams %}   
+    {% for upstream in cfg.upstreams %}
         {% if upstream.basicauth is defined %}
             {% for rule in upstream.basicauth %}
                 handle {{ rule.path }} {
@@ -124,4 +122,3 @@ https://{{ cfg.domain }} {
     {% endif %}
 }
 {% endfor %}
-
