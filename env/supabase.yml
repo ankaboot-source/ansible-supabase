@@ -26,7 +26,7 @@ GRAFANA_ADMIN_USER: admin # default admin username for basic auth
 GRAFANA_ADMIN_PASSWORD: your_admin_password # default admin password for basic auth - change this!
 
 # GitHub Oauth
-GRAFANA_GITHUB_AUTH_ENABLED: false
+GRAFANA_GITHUB_AUTH_ENABLED: false # Disable Caddy's OIDC in below sections if you prefer to use Grafana's built-in OIDC
 GRAFANA_GITHUB_CLIENT_ID: your_client_id # REQUIRED if GRAFANA_AUTH_ANONYMOUS_ENABLED is false
 GRAFANA_GITHUB_CLIENT_SECRET: your_client_secret # REQUIRED if GRAFANA_AUTH_ANONYMOUS_ENABLED is false
 GRAFANA_GITHUB_ALLOWED_ORG: ["org1"] # e.g. ["org1", "org2"]
@@ -213,11 +213,11 @@ projects:
   monitor:
     log_file: monitor-access
     domain: "monitor.example.com"
-    oidc_enabled: false
+    oidc_enabled: true
     upstreams:
       - targets: ["localhost:3002"]
         paths: [""]
-        oidc: false
+        oidc: true
 
 
 ############
