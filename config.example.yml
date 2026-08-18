@@ -108,7 +108,8 @@ advanced:
     sso_client_secret: changeit
     # SSO allow list — space-separated usernames/emails granted admin access.
     # Only used by github, gitlab, and generic providers (discord uses role-based auth).
-    sso_allow_list: "user1@gmail.com user2@gmail.com"
+    # Github allowed user list should be in this form "github.com/user", the rest of sso providers allowed list should in the form of a user's email
+    sso_allow_list: "github.com/user user2@gmail.com"
     # Optional source-IP allow list for the dashboard. Anything listed here
     # becomes an allow list and every other source gets 403, so leave it out
     # entirely (the default) unless you actually want that restriction.
