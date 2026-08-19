@@ -1,0 +1,864 @@
+# .github/workflows/boucle.yml — GitHub Actions workflow for boucle.
+#
+# This is a thin wrapper around `bin/boucle-ci <stage>`. All logic lives in
+# lib/boucle-ci/*.sh (shared with .gitlab-ci.yml) and bin/forge/*.sh (forge
+# abstraction layer). See ARCHITECTURE.md §8.4 for the extension-point design.
+#
+# Forge: GitHub. Set BOUCLE_FORGE=github as a repo variable.
+# Runner: GitHub-hosted by default (ubuntu-latest). To use a self-hosted runner,
+# set the forge-agnostic variable BOUCLE_RUNS_ON to '["self-hosted", "boucle"]'
+# (or any runs-on expression). BOUCLE_RUNS_ON is forge-agnostic — on GitLab it
+# maps to `tags: [$BOUCLE_RUNS_ON]` (default `boucle`).
+# Secrets: BOUCLE_TOKEN (bot PAT), CLOUDFLARE_API_TOKEN, PI_AUTH, BOUCLE_LLM_API_KEY.
+# Variables: BOUCLE_FORGE, BOUCLE_FORGE_HOST, BOUCLE_RUNS_ON, BOUCLE_SPEC_PROFILE,
+#   BOUCLE_UPDATE_MODE, BOUCLE_MAX_PARALLEL_ISSUES, BOUCLE_MAX_ITERATIONS, etc.
+
+name: boucle
+
+on:
+  issues:
+    types: [opened, reopened, edited, assigned, labeled, closed]
+  pull_request:
+    # `synchronize` = new commits pushed to the PR branch. Without it a PR
+    # was checked once, at open, and never again: later pushes ran no CI at
+    # all, so the check on the PR stayed pinned to the SHA it opened with.
+    # It is also the event dispatch maps to the GitLab `update` action, which
+    # re-triggers the reviewer on a revised MR (SKILL.md §4.4).
+    types: [opened, edited, closed, reopened, ready_for_review, review_requested, synchronize]
+  pull_request_review:
+    types: [submitted, dismissed]
+  # No `edited`: boucle rewrites its own comments in place — triage via
+  # forge_issue_note_update, and bin/collapse-duplicate-notes on every
+  # triage/reviewer/e2e run — so each edit fired a dispatch run that had
+  # nothing to do. dispatch never reads the comment action anyway, so an
+  # edit was indistinguishable from a creation and routed on the same
+  # rules. Trade-off: editing a reply on a paused issue no longer
+  # re-triggers the loop; post a new comment instead.
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  push:
+    # GitHub Actions does NOT expand ${{ vars }} or shell variables in the
+    # `on:` block — the trigger must reference a literal branch name. We use
+    # `github.event.repository.default_branch` as a filter inside the deploy
+    # job instead, so the workflow works regardless of the consumer's default
+    # branch name (main, master, etc.).
+    branches: [main, master]
+  schedule:
+    - cron: "*/10 * * * *"  # doctor runs every 10 min
+  workflow_dispatch:
+    inputs:
+      BOUCLE_ISSUE:
+        description: "Issue IID"
+        required: false
+      BOUCLE_ROLE:
+        description: "Role to trigger (triage/worker/reviewer/merger/e2e/catchup)"
+        required: false
+      BOUCLE_ITERATION:
+        description: "Iteration number"
+        required: false
+      BOUCLE_LIVE_URL:
+        description: "Live URL for e2e"
+        required: false
+      BOUCLE_PREVIEW_URL:
+        description: "Preview URL for reviewer"
+        required: false
+      BOUCLE_PRODUCTION_URL:
+        description: "Production URL for e2e"
+        required: false
+      BOUCLE_DEPLOY_MODE:
+        description: "Deploy mode (self|external)"
+        required: false
+      BOUCLE_REVIEW_MODE:
+        description: "Review mode (preview|diff)"
+        required: false
+      BOUCLE_E2E_COMMAND:
+        description: "Command-mode e2e verify command (replaces URL-probing agent)"
+        required: false
+      BOUCLE_E2E_COMMAND_TIMEOUT:
+        description: "Max seconds for the e2e command (default 3600)"
+        required: false
+      BOUCLE_E2E_COMMAND_EVIDENCE_PARSER:
+        description: "Command that takes the verify log as $1 and emits markdown evidence"
+        required: false
+      BOUCLE_EXTERNAL_DEPLOY_WAIT:
+        description: "Seconds to wait for external deploy CI"
+        required: false
+      BOUCLE_REVIEW_CHECKS_WAIT:
+        description: "Seconds to wait for PR check suites in diff mode"
+        required: false
+      BOUCLE_PREVIEW_MARKER_PATH:
+        description: "Path for SHA marker probe file"
+        required: false
+
+# ── Environment ────────────────────────────────────────────────────────────────
+env:
+  BOUCLE_FORGE: github
+  BOUCLE_HOME: ${{ github.workspace }}
+  BOUCLE_WORKSPACE: ${{ github.workspace }}
+  BOUCLE_PROJECT_PATH: ${{ github.repository }}
+  BOUCLE_FORGE_HOST: github.com
+  BOUCLE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+  BOUCLE_PIPELINE_SOURCE: ${{ github.event_name }}
+  BOUCLE_JOB_ID: ${{ github.run_id }}
+  # There is no `github.run_url` property — the expression resolved to an empty
+  # string on every run. lib/boucle-ci.sh rebuilds the URL from GITHUB_RUN_ID
+  # when this is empty, so the link survived, but spell it correctly here so the
+  # job env is not silently lying.
+  BOUCLE_JOB_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  # A PATH, not the JSON itself: every consumer (dispatch, the stage libs)
+  # passes this to `jq -r '...' "$BOUCLE_TRIGGER_PAYLOAD"`, which reads it as
+  # a filename. Passing toJSON(github.event) made jq treat the whole payload
+  # as a path, fail to open it, and abort dispatch on every GitHub webhook.
+  # github.event_path is the file Actions already writes for exactly this.
+  # Caveat: `github.event_path` is not actually exposed to workflow expressions,
+  # so this resolves to an empty string. lib/boucle-ci.sh falls back to the
+  # GITHUB_EVENT_PATH runner variable, which names the same file — that fallback
+  # is what makes dispatch work; this line is kept as the declaration of intent.
+  BOUCLE_TRIGGER_PAYLOAD: ${{ github.event_path }}
+  BOUCLE_TOKEN: ${{ secrets.BOUCLE_TOKEN }}
+  BOUCLE_BOT_USERNAME: ${{ vars.BOUCLE_BOT_USERNAME || 'up-bot' }}
+  BOUCLE_BOT_ID: ${{ vars.BOUCLE_BOT_ID || '' }}
+  BOUCLE_RUNS_ON: ${{ vars.BOUCLE_RUNS_ON || 'ubuntu-latest' }}
+  BOUCLE_SPEC_PROFILE: ${{ vars.BOUCLE_SPEC_PROFILE || 'strict' }}
+  BOUCLE_UPDATE_MODE: ${{ vars.BOUCLE_UPDATE_MODE || 'release' }}
+  BOUCLE_MAX_PARALLEL_ISSUES: ${{ vars.BOUCLE_MAX_PARALLEL_ISSUES || '5' }}
+  BOUCLE_MAX_ITERATIONS: ${{ vars.BOUCLE_MAX_ITERATIONS || '5' }}
+  BOUCLE_STALENESS_THRESHOLD: ${{ vars.BOUCLE_STALENESS_THRESHOLD || '2400' }}
+  BOUCLE_BUILD_CMD: ${{ vars.BOUCLE_BUILD_CMD || 'npm run build' }}
+  BOUCLE_BUILD_OUTPUT: ${{ vars.BOUCLE_BUILD_OUTPUT || 'public' }}
+  BOUCLE_DEPLOY_CMD: ${{ vars.BOUCLE_DEPLOY_CMD || 'npx wrangler pages deploy public --project-name=$BOUCLE_DEPLOY_PROJECT' }}
+  BOUCLE_DEPLOY_PROJECT: ${{ vars.BOUCLE_DEPLOY_PROJECT || '' }}
+  BOUCLE_DEPLOY_PROVIDER: ${{ vars.BOUCLE_DEPLOY_PROVIDER || '' }}
+  BOUCLE_PREVIEW_PROPAGATION_WAIT: ${{ vars.BOUCLE_PREVIEW_PROPAGATION_WAIT || '60' }}
+  BOUCLE_LLM_BASE_URL: ${{ vars.BOUCLE_LLM_BASE_URL || 'https://ollama.com/v1' }}
+  BOUCLE_LLM_API_KEY: ${{ secrets.BOUCLE_LLM_API_KEY }}
+  BOUCLE_FALLBACK_PROVIDER: ${{ vars.BOUCLE_FALLBACK_PROVIDER || '' }}
+  BOUCLE_DND_ENABLED: ${{ vars.BOUCLE_DND_ENABLED || 'false' }}
+  BOUCLE_DND_START: ${{ vars.BOUCLE_DND_START || '22:00' }}
+  BOUCLE_DND_END: ${{ vars.BOUCLE_DND_END || '07:00' }}
+  BOUCLE_DND_TZ: ${{ vars.BOUCLE_DND_TZ || 'UTC' }}
+  BOUCLE_DND_EXCLUDE_DAYS: ${{ vars.BOUCLE_DND_EXCLUDE_DAYS || '' }}
+  BOUCLE_FALLBACK_MODEL_TRIAGE: ${{ vars.BOUCLE_FALLBACK_MODEL_TRIAGE || 'glm-5.2' }}
+  BOUCLE_FALLBACK_MODEL_WORKER: ${{ vars.BOUCLE_FALLBACK_MODEL_WORKER || 'deepseek-v4-flash' }}
+  BOUCLE_FALLBACK_MODEL_REVIEWER: ${{ vars.BOUCLE_FALLBACK_MODEL_REVIEWER || 'glm-5.2' }}
+  BOUCLE_FALLBACK_MODEL_E2E: ${{ vars.BOUCLE_FALLBACK_MODEL_E2E || 'deepseek-v4-flash' }}
+  BOUCLE_FALLBACK_BASE_URL: ${{ secrets.BOUCLE_FALLBACK_BASE_URL || '' }}
+  BOUCLE_FALLBACK_API_KEY: ${{ secrets.BOUCLE_FALLBACK_API_KEY || '' }}
+  BOUCLE_MONO_USER: ${{ vars.BOUCLE_MONO_USER || 'false' }}
+  BOUCLE_ALLOWED_USERS: ${{ vars.BOUCLE_ALLOWED_USERS || '' }}
+  BOUCLE_VISION_ROUTING: ${{ vars.BOUCLE_VISION_ROUTING || 'enabled' }}
+  BOUCLE_VISION_MODEL: ${{ vars.BOUCLE_VISION_MODEL || 'minimax-m3' }}
+  BOUCLE_VISION_ROLES: ${{ vars.BOUCLE_VISION_ROLES || 'triage,worker,reviewer' }}
+  BOUCLE_DEPLOY_MODE: ${{ vars.BOUCLE_DEPLOY_MODE || 'self' }}
+  BOUCLE_REVIEW_MODE: ${{ vars.BOUCLE_REVIEW_MODE || 'preview' }}
+  BOUCLE_E2E_COMMAND: ${{ vars.BOUCLE_E2E_COMMAND || '' }}
+  BOUCLE_E2E_COMMAND_TIMEOUT: ${{ vars.BOUCLE_E2E_COMMAND_TIMEOUT || '3600' }}
+  BOUCLE_E2E_COMMAND_EVIDENCE_PARSER: ${{ vars.BOUCLE_E2E_COMMAND_EVIDENCE_PARSER || '' }}
+  BOUCLE_EXTERNAL_DEPLOY_WAIT: ${{ vars.BOUCLE_EXTERNAL_DEPLOY_WAIT || '600' }}
+  BOUCLE_REVIEW_CHECKS_WAIT: ${{ vars.BOUCLE_REVIEW_CHECKS_WAIT || '900' }}
+  BOUCLE_PREVIEW_MARKER_PATH: ${{ vars.BOUCLE_PREVIEW_MARKER_PATH || '__boucle_commit__.txt' }}
+  BOUCLE_DEPLOY_URL_REGEX: ${{ vars.BOUCLE_DEPLOY_URL_REGEX || 'https://[a-z0-9.-]+\\.pages\\.dev' }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  PI_AUTH: ${{ secrets.PI_AUTH }}
+
+# `metadata: read` is a GitHub *App* permission, not a workflow one — the
+# workflow `permissions:` block only accepts the scopes listed at
+# docs.github.com/actions/reference/workflow-syntax#permissions, and any other
+# key fails the whole file with "Unexpected value". Repository metadata is
+# readable implicitly via `contents`, so nothing is lost by dropping it.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write
+
+# ── Concurrency ─────────────────────────────────────────────────────────────────
+# Serial merge: only one merger job at a time (lesson #8, #10).
+# Per-issue serialization: worker/reviewer/e2e for the same issue don't overlap.
+#
+# Two separate groups, mirroring the GitLab resource_group architecture
+# (dispatch: boucle-dispatch, worker/reviewer/e2e: boucle-issue-$BOUCLE_ISSUE):
+#
+#   - workflow_dispatch (chain_to_role) → boucle-issue-<BOUCLE_ISSUE>
+#     Serializes role-specific runs (worker/reviewer/e2e) per issue, so two
+#     worker runs or two reviewer runs for the same issue queue, not overlap.
+#
+#   - webhook events (issues, issue_comment, pull_request, schedule) → boucle-dispatch-<issue|run_id>
+#     The dispatch job is a fast router; it must NOT compete with a
+#     chain_to_role workflow_dispatch for the same concurrency slot.
+#     Previously both shared one group, so the issues webhook fired by
+#     set_boucle_label (worker→review transition) could cancel the
+#     chain_to_role reviewer workflow_dispatch. The dispatch then saw
+#     boucle:review and no-op'd, leaving the reviewer untriggered and the
+#     issue stuck at boucle:review until the doctor's stuck-issue recovery
+#     fired — producing the "FAIL loops" pattern (consumer 2026-08).
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && format('boucle-issue-{0}', github.event.inputs.BOUCLE_ISSUE) || format('boucle-dispatch-{0}', github.event.issue.number || github.event.pull_request.number || github.run_id) }}
+  cancel-in-progress: false
+
+# ── Jobs ────────────────────────────────────────────────────────────────────────
+jobs:
+  # ── check: lint + tests on push/PR to default branch ─────────────────────────
+  check:
+    runs-on: ubuntu-latest
+    # Only run on the engine repo (ankaboot-source/boucle) — consumers don't
+    # have a Makefile, test/ directory, or bats tests. Running `make check` on
+    # a consumer fails and sends spurious failure notifications.
+    if: |
+      github.repository == 'ankaboot-source/boucle'
+      && (github.event_name == 'push' || github.event_name == 'pull_request')
+      && !contains(github.event.head_commit.message, '[skip ci]')
+    steps:
+      # test/*.bats load bats-support/bats-assert from test/test_helper/, which
+      # are git submodules. Without them every test aborts in setup() with
+      # "Could not find .../bats-support/load".
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # `make check` = lint (shellcheck + shfmt) + test (bats). ubuntu-latest
+      # ships shellcheck but neither shfmt nor bats, and the Makefile guards
+      # abort the job on the first missing one — so install them here. Pinned:
+      # an shfmt minor bump can change formatting and would fail `shfmt -d` on
+      # untouched files.
+      - name: Install lint/test tooling
+        env:
+          SHFMT_VERSION: '3.10.0'
+          BATS_VERSION: '1.11.0'
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/shfmt" \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          chmod +x "$HOME/.local/bin/shfmt"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          npm install -g "bats@${BATS_VERSION}"
+      # Reject any commit that modified .boucle/ without an authorized bot
+      # subject (chore(boucle): ...). .boucle/ is the engine dir owned by
+      # bin/update — manual edits get overwritten on the next sync.
+      - name: Check .boucle/ sync guard
+        run: bin/check-boucle-sync
+      - run: make check
+
+  # ── engine-smoke: dogfood the REAL bootstrap chain (issue #29) ───────────────
+  # Executes the same bootstrap a consumer job runs (forge shims + shared libs,
+  # gitlab backend) and asserts the full function inventory + env contract.
+  # Catches at dev time the failure class that previously only surfaced on real
+  # consumers (forge prelude order, missing BOUCLE_*/CI_DEFAULT_BRANCH exports,
+  # shim drift, S4 helpers present).
+  engine-smoke:
+    # Only run on the engine repo itself (ankaboot-source/boucle), never on
+    # consumers — the smoke test sources bin/forge/common.sh directly, which
+    # only exists at the engine root, not inside the .boucle/ submodule.
+    if: github.repository == 'ankaboot-source/boucle'
+    runs-on: ubuntu-latest
+    continue-on-error: true  # boucle manages its own retries — exit 1 is normal (dispatch ABORT, reviewer re-trigger, etc.)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Bootstrap chain smoke test
+        run: |
+          set -euo pipefail
+          export BOUCLE_HOME="$PWD" BOUCLE_FORGE=gitlab BOUCLE_FORGE_HOST=framagit.org
+          source bin/forge/common.sh
+          forge_init
+          source lib/boucle.sh
+          export BOUCLE_PROJECT_ID="ci-smoke"
+          export BOUCLE_DEFAULT_BRANCH=master
+          source lib/boucle-ci.sh
+          for fn in forge_issue_labels_get forge_issue_labels_set forge_issue_assign \
+                     forge_issue_note forge_trigger_role forge_mr_lookup_by_branch \
+                     set_boucle_label chain_to_role resolve_reporter_id maybe_close_parent \
+                     boucle_escalate_merge_conflict boucle_parse_merge_conflicts; do
+            declare -F "$fn" > /dev/null || { echo "engine-smoke MISSING function: $fn"; exit 1; }
+          done
+          # No bare-"main" fallback may survive in the trigger path (bug class #29)
+          grep -q 'CI_DEFAULT_BRANCH' bin/forge/gitlab.sh
+          echo "engine-smoke OK"
+
+  # ── dispatch: webhook router (issues, PRs, comments, reviews) ─────────────────
+  dispatch:
+    runs-on: ubuntu-latest
+    continue-on-error: true  # boucle manages its own retries — exit 1 is normal (dispatch ABORT, reviewer re-trigger, etc.)
+    if: |
+      github.event_name == 'issues'
+      || github.event_name == 'pull_request'
+      || github.event_name == 'issue_comment'
+      || github.event_name == 'pull_request_review'
+      || github.event_name == 'pull_request_review_comment'
+    outputs:
+      issue-iid: ${{ steps.dispatch.outputs.issue-iid }}
+      role: ${{ steps.dispatch.outputs.role }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl jq git
+          npm install -g glab 2>/dev/null || true
+          # Install jcode coding agent (standalone Rust binary)
+          JCODE_VER="${JCODE_VERSION:-v0.75.3}"
+          if ! command -v jcode &>/dev/null || ! jcode --version 2>/dev/null | grep -q "$JCODE_VER"; then
+            echo "Installing jcode coding agent (standalone binary, $JCODE_VER)..."
+            mkdir -p "$HOME/.local/bin"
+            JCODE_TMP="/tmp/jcode-${GITHUB_RUN_ID:-local}"
+            curl -fsSL "https://github.com/1jehuang/jcode/releases/download/${JCODE_VER}/jcode-linux-x86_64.tar.gz" -o "$JCODE_TMP.tar.gz"
+            mkdir -p "$JCODE_TMP"
+            tar xzf "$JCODE_TMP.tar.gz" -C "$JCODE_TMP"
+            mv "$JCODE_TMP/jcode-linux-x86_64.bin" "$HOME/.local/bin/jcode"
+            chmod +x "$HOME/.local/bin/jcode"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # Install gh CLI (pre-installed on ubuntu-latest)
+          gh --version
+      - name: Self-update
+        run: |
+          [ "${BOUCLE_UPDATE_DISABLE:-false}" = "true" ] && exit 0
+          [ -d .boucle/bin ] || exit 0
+          [ "${BOUCLE_PIPELINE_SOURCE:-}" = "push" ] && exit 0
+          case "$GITHUB_REF" in
+            refs/heads/*) _BRANCH="${GITHUB_REF#refs/heads/}" ;;
+            *) exit 0 ;;
+          esac
+          [ "$_BRANCH" = "$BOUCLE_DEFAULT_BRANCH" ] || exit 0
+          bash "$PWD/.boucle/bin/update" || echo "[boucle] WARN: self-update failed, continuing with current version" >&2
+      - name: Dispatch
+        id: dispatch
+        run: |
+          export BOUCLE_PROJECT_ID="${{ github.repository }}"
+          [ -d .boucle ] && export BOUCLE_HOME="$PWD/.boucle"
+          $BOUCLE_HOME/bin/boucle-ci dispatch
+          if [ -f .boucle-issue ]; then
+            echo "issue-iid=$(cat .boucle-issue)" >> "$GITHUB_OUTPUT"
+            echo "role=triage" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── triage: analyze issue, post structured comment ───────────────────────────
+  triage:
+    needs: dispatch
+    runs-on: ${{ vars.BOUCLE_RUNS_ON || 'ubuntu-latest' }}
+    continue-on-error: true  # boucle manages its own retries — exit 1 is normal (dispatch ABORT, reviewer re-trigger, etc.)
+    # The doctor re-triggers triage via workflow_dispatch with an empty
+    # BOUCLE_ROLE (chain_to_role "$IID" ""). On GitLab, triage runs on
+    # `trigger` with empty BOUCLE_ROLE; on GitHub, dispatch doesn't run on
+    # workflow_dispatch, so `needs: dispatch` would skip triage. `always()`
+    # lets triage evaluate its `if` even when dispatch was skipped, and the
+    # workflow_dispatch branch lets the doctor's re-trigger reach triage
+    # (GitHub parity with GitLab's `$CI_PIPELINE_SOURCE == "trigger"` rule).
+    if: |
+      always() && (
+        needs.dispatch.outputs.issue-iid != ''
+        || (github.event_name == 'workflow_dispatch' && (github.event.inputs.BOUCLE_ROLE == '' || github.event.inputs.BOUCLE_ROLE == 'triage'))
+      )
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Setup
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl jq git
+          npm install -g glab 2>/dev/null || true
+          # Install jcode coding agent (standalone Rust binary)
+          JCODE_VER="${JCODE_VERSION:-v0.75.3}"
+          if ! command -v jcode &>/dev/null || ! jcode --version 2>/dev/null | grep -q "$JCODE_VER"; then
+            echo "Installing jcode coding agent (standalone binary, $JCODE_VER)..."
+            mkdir -p "$HOME/.local/bin"
+            JCODE_TMP="/tmp/jcode-${GITHUB_RUN_ID:-local}"
+            curl -fsSL "https://github.com/1jehuang/jcode/releases/download/${JCODE_VER}/jcode-linux-x86_64.tar.gz" -o "$JCODE_TMP.tar.gz"
+            mkdir -p "$JCODE_TMP"
+            tar xzf "$JCODE_TMP.tar.gz" -C "$JCODE_TMP"
+            mv "$JCODE_TMP/jcode-linux-x86_64.bin" "$HOME/.local/bin/jcode"
+            chmod +x "$HOME/.local/bin/jcode"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Self-update
+        run: |
+          [ "${BOUCLE_UPDATE_DISABLE:-false}" = "true" ] && exit 0
+          [ -d .boucle/bin ] || exit 0
+          [ "${BOUCLE_PIPELINE_SOURCE:-}" = "push" ] && exit 0
+          case "$GITHUB_REF" in
+            refs/heads/*) _BRANCH="${GITHUB_REF#refs/heads/}" ;;
+            *) exit 0 ;;
+          esac
+          [ "$_BRANCH" = "$BOUCLE_DEFAULT_BRANCH" ] || exit 0
+          bash "$PWD/.boucle/bin/update" || echo "[boucle] WARN: self-update failed, continuing with current version" >&2
+      - name: Triage
+        env:
+          BOUCLE_ISSUE: ${{ github.event.inputs.BOUCLE_ISSUE || needs.dispatch.outputs.issue-iid }}
+        run: |
+          export BOUCLE_PROJECT_ID="${{ github.repository }}"
+          [ -d .boucle ] && export BOUCLE_HOME="$PWD/.boucle"
+          $BOUCLE_HOME/bin/boucle-ci triage
+      # Agent transcript (#33). if: always() is the point — a failed run is
+      # exactly the one whose transcript gets read. bin/jc redacts secrets
+      # from the log before every exit path, so this is safe to upload.
+      - name: Upload agent transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boucle-agent-log-triage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .boucle/**/agent-output.log
+            .boucle-state/**/agent-output.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ── worker: implement on branch boucle/<iid> ─────────────────────────────────
+  worker:
+    runs-on: ${{ vars.BOUCLE_RUNS_ON || 'ubuntu-latest' }}
+    continue-on-error: true  # boucle manages its own retries — exit 1 is normal (dispatch ABORT, reviewer re-trigger, etc.)
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.BOUCLE_ROLE == 'worker')
+      || (github.event_name == 'issues' && contains(github.event.action, 'labeled') && contains(github.event.label.name, 'boucle:todo'))
+    timeout-minutes: 30
+    # Job-level concurrency: serialize ALL worker runs for the same issue,
+    # regardless of trigger source (workflow_dispatch from chain_to_role OR
+    # issues:labeled from set_boucle_label). The workflow-level concurrency
+    # splits by event source (boucle-issue-<N> vs boucle-dispatch-<N>), so
+    # without this job-level block the two trigger paths run SIMULTANEOUSLY
+    # — two workers on the same branch, duplicate "build failed" comments,
+    # racing commits. This mirrors GitLab's
+    # `resource_group: boucle-issue-$BOUCLE_ISSUE` on the worker job.
+    # cancel-in-progress: false queues the second run instead of cancelling
+    # the first — a worker mid-build must not be killed by a re-trigger.
+    concurrency:
+      group: boucle-issue-${{ github.event.inputs.BOUCLE_ISSUE || github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      # Persist .boucle-state/<issue>/ state across worker iterations. On
+      # GitHub-hosted runners $HOME is ephemeral, so $BOUCLE_STATE_CACHE
+      # (default $HOME/.boucle-state-cache) would be lost between runs.
+      # actions/cache restores it before the worker runs and saves it after
+      # (lesson #28). Per-issue state lives OUTSIDE .boucle/ (the engine
+      # submodule on consumers): git submodule update clobbers anything
+      # inside the submodule, so state must never ride along with the engine.
+      - name: Restore boucle state cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/boucle-state
+          key: boucle-state-${{ github.event.inputs.BOUCLE_ISSUE || github.event.issue.number || 'default' }}
+      - name: Setup
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl jq git
+          npm install -g glab 2>/dev/null || true
+          # Install jcode coding agent (standalone Rust binary)
+          JCODE_VER="${JCODE_VERSION:-v0.75.3}"
+          if ! command -v jcode &>/dev/null || ! jcode --version 2>/dev/null | grep -q "$JCODE_VER"; then
+            echo "Installing jcode coding agent (standalone binary, $JCODE_VER)..."
+            mkdir -p "$HOME/.local/bin"
+            JCODE_TMP="/tmp/jcode-${GITHUB_RUN_ID:-local}"
+            curl -fsSL "https://github.com/1jehuang/jcode/releases/download/${JCODE_VER}/jcode-linux-x86_64.tar.gz" -o "$JCODE_TMP.tar.gz"
+            mkdir -p "$JCODE_TMP"
+            tar xzf "$JCODE_TMP.tar.gz" -C "$JCODE_TMP"
+            mv "$JCODE_TMP/jcode-linux-x86_64.bin" "$HOME/.local/bin/jcode"
+            chmod +x "$HOME/.local/bin/jcode"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Self-update
+        run: |
+          [ "${BOUCLE_UPDATE_DISABLE:-false}" = "true" ] && exit 0
+          [ -d .boucle/bin ] || exit 0
+          [ "${BOUCLE_PIPELINE_SOURCE:-}" = "push" ] && exit 0
+          case "$GITHUB_REF" in
+            refs/heads/*) _BRANCH="${GITHUB_REF#refs/heads/}" ;;
+            *) exit 0 ;;
+          esac
+          [ "$_BRANCH" = "$BOUCLE_DEFAULT_BRANCH" ] || exit 0
+          bash "$PWD/.boucle/bin/update" || echo "[boucle] WARN: self-update failed, continuing with current version" >&2
+      - name: Worker
+        env:
+          BOUCLE_ISSUE: ${{ github.event.inputs.BOUCLE_ISSUE || github.event.issue.number }}
+          BOUCLE_ITERATION: ${{ github.event.inputs.BOUCLE_ITERATION || '1' }}
+          BOUCLE_STATE_CACHE: ${{ runner.temp }}/boucle-state
+        run: |
+          export BOUCLE_PROJECT_ID="${{ github.repository }}"
+          [ -d .boucle ] && export BOUCLE_HOME="$PWD/.boucle"
+          $BOUCLE_HOME/bin/boucle-ci worker
+      - name: Upload agent transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boucle-agent-log-worker-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .boucle/**/agent-output.log
+            .boucle-state/**/agent-output.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Save boucle state cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/boucle-state
+          key: boucle-state-${{ github.event.inputs.BOUCLE_ISSUE || github.event.issue.number || 'default' }}
+
+  # ── reviewer: adversarial review against preview ──────────────────────────────
+  reviewer:
+    runs-on: ${{ vars.BOUCLE_RUNS_ON || 'ubuntu-latest' }}
+    continue-on-error: true  # boucle manages its own retries — exit 1 is normal (dispatch ABORT, reviewer re-trigger, etc.)
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.BOUCLE_ROLE == 'reviewer'
+    timeout-minutes: 30
+    # Job-level concurrency: serialize reviewer runs per issue (mirrors
+    # GitLab's resource_group: boucle-issue-$BOUCLE_ISSUE). The reviewer
+    # only triggers on workflow_dispatch today, but this is defense-in-depth
+    # — a future trigger path (e.g. pull_request_review) would otherwise
+    # race the workflow_dispatch re-trigger path.
+    concurrency:
+      group: boucle-issue-${{ github.event.inputs.BOUCLE_ISSUE }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Setup
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl jq git
+          npm install -g glab 2>/dev/null || true
+          # Install jcode coding agent (standalone Rust binary)
+          JCODE_VER="${JCODE_VERSION:-v0.75.3}"
+          if ! command -v jcode &>/dev/null || ! jcode --version 2>/dev/null | grep -q "$JCODE_VER"; then
+            echo "Installing jcode coding agent (standalone binary, $JCODE_VER)..."
+            mkdir -p "$HOME/.local/bin"
+            JCODE_TMP="/tmp/jcode-${GITHUB_RUN_ID:-local}"
+            curl -fsSL "https://github.com/1jehuang/jcode/releases/download/${JCODE_VER}/jcode-linux-x86_64.tar.gz" -o "$JCODE_TMP.tar.gz"
+            mkdir -p "$JCODE_TMP"
+            tar xzf "$JCODE_TMP.tar.gz" -C "$JCODE_TMP"
+            mv "$JCODE_TMP/jcode-linux-x86_64.bin" "$HOME/.local/bin/jcode"
+            chmod +x "$HOME/.local/bin/jcode"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Self-update
+        run: |
+          [ "${BOUCLE_UPDATE_DISABLE:-false}" = "true" ] && exit 0
+          [ -d .boucle/bin ] || exit 0
+          [ "${BOUCLE_PIPELINE_SOURCE:-}" = "push" ] && exit 0
+          case "$GITHUB_REF" in
+            refs/heads/*) _BRANCH="${GITHUB_REF#refs/heads/}" ;;
+            *) exit 0 ;;
+          esac
+          [ "$_BRANCH" = "$BOUCLE_DEFAULT_BRANCH" ] || exit 0
+          bash "$PWD/.boucle/bin/update" || echo "[boucle] WARN: self-update failed, continuing with current version" >&2
+      - name: Reviewer
+        env:
+          BOUCLE_ISSUE: ${{ github.event.inputs.BOUCLE_ISSUE }}
+          BOUCLE_ITERATION: ${{ github.event.inputs.BOUCLE_ITERATION || '1' }}
+        run: |
+          export BOUCLE_PROJECT_ID="${{ github.repository }}"
+          [ -d .boucle ] && export BOUCLE_HOME="$PWD/.boucle"
+          $BOUCLE_HOME/bin/boucle-ci reviewer
+      - name: Upload agent transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boucle-agent-log-reviewer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .boucle/**/agent-output.log
+            .boucle-state/**/agent-output.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ── merger: rebase + merge PR (serial) ────────────────────────────────────────
+  merger:
+    runs-on: ubuntu-latest
+    continue-on-error: true  # boucle manages its own retries — exit 1 is normal (dispatch ABORT, reviewer re-trigger, etc.)
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.BOUCLE_ROLE == 'merger'
+    timeout-minutes: 10
+    concurrency:
+      group: boucle-merge
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Setup
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl jq git
+          npm install -g glab 2>/dev/null || true
+          # Install jcode coding agent (standalone Rust binary)
+          JCODE_VER="${JCODE_VERSION:-v0.75.3}"
+          if ! command -v jcode &>/dev/null || ! jcode --version 2>/dev/null | grep -q "$JCODE_VER"; then
+            echo "Installing jcode coding agent (standalone binary, $JCODE_VER)..."
+            mkdir -p "$HOME/.local/bin"
+            JCODE_TMP="/tmp/jcode-${GITHUB_RUN_ID:-local}"
+            curl -fsSL "https://github.com/1jehuang/jcode/releases/download/${JCODE_VER}/jcode-linux-x86_64.tar.gz" -o "$JCODE_TMP.tar.gz"
+            mkdir -p "$JCODE_TMP"
+            tar xzf "$JCODE_TMP.tar.gz" -C "$JCODE_TMP"
+            mv "$JCODE_TMP/jcode-linux-x86_64.bin" "$HOME/.local/bin/jcode"
+            chmod +x "$HOME/.local/bin/jcode"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Self-update
+        run: |
+          [ "${BOUCLE_UPDATE_DISABLE:-false}" = "true" ] && exit 0
+          [ -d .boucle/bin ] || exit 0
+          [ "${BOUCLE_PIPELINE_SOURCE:-}" = "push" ] && exit 0
+          case "$GITHUB_REF" in
+            refs/heads/*) _BRANCH="${GITHUB_REF#refs/heads/}" ;;
+            *) exit 0 ;;
+          esac
+          [ "$_BRANCH" = "$BOUCLE_DEFAULT_BRANCH" ] || exit 0
+          bash "$PWD/.boucle/bin/update" || echo "[boucle] WARN: self-update failed, continuing with current version" >&2
+      - name: Merger
+        env:
+          BOUCLE_ISSUE: ${{ github.event.inputs.BOUCLE_ISSUE }}
+        run: |
+          export BOUCLE_PROJECT_ID="${{ github.repository }}"
+          [ -d .boucle ] && export BOUCLE_HOME="$PWD/.boucle"
+          $BOUCLE_HOME/bin/boucle-ci merger
+
+  # ── post-merge: poll deploy, trigger e2e ──────────────────────────────────────
+  post-merge:
+    runs-on: ubuntu-latest
+    continue-on-error: true  # boucle manages its own retries — exit 1 is normal (dispatch ABORT, reviewer re-trigger, etc.)
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.BOUCLE_ROLE == 'post-merge'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Setup
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl jq git
+          npm install -g glab 2>/dev/null || true
+          # Install jcode coding agent (standalone Rust binary)
+          JCODE_VER="${JCODE_VERSION:-v0.75.3}"
+          if ! command -v jcode &>/dev/null || ! jcode --version 2>/dev/null | grep -q "$JCODE_VER"; then
+            echo "Installing jcode coding agent (standalone binary, $JCODE_VER)..."
+            mkdir -p "$HOME/.local/bin"
+            JCODE_TMP="/tmp/jcode-${GITHUB_RUN_ID:-local}"
+            curl -fsSL "https://github.com/1jehuang/jcode/releases/download/${JCODE_VER}/jcode-linux-x86_64.tar.gz" -o "$JCODE_TMP.tar.gz"
+            mkdir -p "$JCODE_TMP"
+            tar xzf "$JCODE_TMP.tar.gz" -C "$JCODE_TMP"
+            mv "$JCODE_TMP/jcode-linux-x86_64.bin" "$HOME/.local/bin/jcode"
+            chmod +x "$HOME/.local/bin/jcode"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Self-update
+        run: |
+          [ "${BOUCLE_UPDATE_DISABLE:-false}" = "true" ] && exit 0
+          [ -d .boucle/bin ] || exit 0
+          [ "${BOUCLE_PIPELINE_SOURCE:-}" = "push" ] && exit 0
+          case "$GITHUB_REF" in
+            refs/heads/*) _BRANCH="${GITHUB_REF#refs/heads/}" ;;
+            *) exit 0 ;;
+          esac
+          [ "$_BRANCH" = "$BOUCLE_DEFAULT_BRANCH" ] || exit 0
+          bash "$PWD/.boucle/bin/update" || echo "[boucle] WARN: self-update failed, continuing with current version" >&2
+      - name: Post-merge
+        env:
+          BOUCLE_ISSUE: ${{ github.event.inputs.BOUCLE_ISSUE }}
+        run: |
+          export BOUCLE_PROJECT_ID="${{ github.repository }}"
+          [ -d .boucle ] && export BOUCLE_HOME="$PWD/.boucle"
+          $BOUCLE_HOME/bin/boucle-ci post-merge
+
+  # ── catchup: close issue after merge, cascade parent ─────────────────────────
+  catchup:
+    runs-on: ubuntu-latest
+    continue-on-error: true  # boucle manages its own retries — exit 1 is normal (dispatch ABORT, reviewer re-trigger, etc.)
+    if: |
+      github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Setup
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl jq git
+          npm install -g glab 2>/dev/null || true
+          # Install jcode coding agent (standalone Rust binary)
+          JCODE_VER="${JCODE_VERSION:-v0.75.3}"
+          if ! command -v jcode &>/dev/null || ! jcode --version 2>/dev/null | grep -q "$JCODE_VER"; then
+            echo "Installing jcode coding agent (standalone binary, $JCODE_VER)..."
+            mkdir -p "$HOME/.local/bin"
+            JCODE_TMP="/tmp/jcode-${GITHUB_RUN_ID:-local}"
+            curl -fsSL "https://github.com/1jehuang/jcode/releases/download/${JCODE_VER}/jcode-linux-x86_64.tar.gz" -o "$JCODE_TMP.tar.gz"
+            mkdir -p "$JCODE_TMP"
+            tar xzf "$JCODE_TMP.tar.gz" -C "$JCODE_TMP"
+            mv "$JCODE_TMP/jcode-linux-x86_64.bin" "$HOME/.local/bin/jcode"
+            chmod +x "$HOME/.local/bin/jcode"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Self-update
+        run: |
+          [ "${BOUCLE_UPDATE_DISABLE:-false}" = "true" ] && exit 0
+          [ -d .boucle/bin ] || exit 0
+          [ "${BOUCLE_PIPELINE_SOURCE:-}" = "push" ] && exit 0
+          case "$GITHUB_REF" in
+            refs/heads/*) _BRANCH="${GITHUB_REF#refs/heads/}" ;;
+            *) exit 0 ;;
+          esac
+          [ "$_BRANCH" = "$BOUCLE_DEFAULT_BRANCH" ] || exit 0
+          bash "$PWD/.boucle/bin/update" || echo "[boucle] WARN: self-update failed, continuing with current version" >&2
+      - name: Catchup
+        run: |
+          export BOUCLE_PROJECT_ID="${{ github.repository }}"
+          [ -d .boucle ] && export BOUCLE_HOME="$PWD/.boucle"
+          $BOUCLE_HOME/bin/boucle-ci catchup
+
+  # ── deploy: build + deploy to Cloudflare Pages (on push to default) ───────────
+  deploy:
+    runs-on: ${{ vars.BOUCLE_RUNS_ON || 'ubuntu-latest' }}
+    if: |
+      github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          # No cache: 'npm' — boucle is a shell project with no package-lock.json.
+          # setup-node's npm cache requires a lock file and fails the job without
+          # one. The Install dependencies step below already no-ops when there is
+          # no lock file, so there is nothing to cache anyway.
+      - name: Install dependencies
+        run: "[ -f package-lock.json ] && npm ci || true"
+      - name: Self-update
+        run: |
+          [ "${BOUCLE_UPDATE_DISABLE:-false}" = "true" ] && exit 0
+          [ -d .boucle/bin ] || exit 0
+          [ "${BOUCLE_PIPELINE_SOURCE:-}" = "push" ] && exit 0
+          case "$GITHUB_REF" in
+            refs/heads/*) _BRANCH="${GITHUB_REF#refs/heads/}" ;;
+            *) exit 0 ;;
+          esac
+          [ "$_BRANCH" = "$BOUCLE_DEFAULT_BRANCH" ] || exit 0
+          bash "$PWD/.boucle/bin/update" || echo "[boucle] WARN: self-update failed, continuing with current version" >&2
+      - name: Deploy
+        run: |
+          export BOUCLE_PROJECT_ID="${{ github.repository }}"
+          [ -d .boucle ] && export BOUCLE_HOME="$PWD/.boucle"
+          $BOUCLE_HOME/bin/boucle-ci deploy
+
+  # ── e2e: verify on live/preview URL ───────────────────────────────────────────
+  e2e:
+    runs-on: ${{ vars.BOUCLE_RUNS_ON || 'ubuntu-latest' }}
+    continue-on-error: true  # boucle manages its own retries — exit 1 is normal (dispatch ABORT, reviewer re-trigger, etc.)
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.BOUCLE_ROLE == 'e2e'
+    timeout-minutes: 20
+    # Job-level concurrency: serialize e2e runs per issue (mirrors GitLab's
+    # resource_group: boucle-issue-$BOUCLE_ISSUE). Defense-in-depth: the e2e
+    # only triggers on workflow_dispatch today, but a future trigger path
+    # would otherwise race the workflow_dispatch re-trigger path.
+    concurrency:
+      group: boucle-issue-${{ github.event.inputs.BOUCLE_ISSUE }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Setup
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl jq git
+          npm install -g glab 2>/dev/null || true
+          # Install jcode coding agent (standalone Rust binary)
+          JCODE_VER="${JCODE_VERSION:-v0.75.3}"
+          if ! command -v jcode &>/dev/null || ! jcode --version 2>/dev/null | grep -q "$JCODE_VER"; then
+            echo "Installing jcode coding agent (standalone binary, $JCODE_VER)..."
+            mkdir -p "$HOME/.local/bin"
+            JCODE_TMP="/tmp/jcode-${GITHUB_RUN_ID:-local}"
+            curl -fsSL "https://github.com/1jehuang/jcode/releases/download/${JCODE_VER}/jcode-linux-x86_64.tar.gz" -o "$JCODE_TMP.tar.gz"
+            mkdir -p "$JCODE_TMP"
+            tar xzf "$JCODE_TMP.tar.gz" -C "$JCODE_TMP"
+            mv "$JCODE_TMP/jcode-linux-x86_64.bin" "$HOME/.local/bin/jcode"
+            chmod +x "$HOME/.local/bin/jcode"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Self-update
+        run: |
+          [ "${BOUCLE_UPDATE_DISABLE:-false}" = "true" ] && exit 0
+          [ -d .boucle/bin ] || exit 0
+          [ "${BOUCLE_PIPELINE_SOURCE:-}" = "push" ] && exit 0
+          case "$GITHUB_REF" in
+            refs/heads/*) _BRANCH="${GITHUB_REF#refs/heads/}" ;;
+            *) exit 0 ;;
+          esac
+          [ "$_BRANCH" = "$BOUCLE_DEFAULT_BRANCH" ] || exit 0
+          bash "$PWD/.boucle/bin/update" || echo "[boucle] WARN: self-update failed, continuing with current version" >&2
+      - name: E2E
+        env:
+          BOUCLE_ISSUE: ${{ github.event.inputs.BOUCLE_ISSUE }}
+          BOUCLE_LIVE_URL: ${{ github.event.inputs.BOUCLE_LIVE_URL }}
+        run: |
+          export BOUCLE_PROJECT_ID="${{ github.repository }}"
+          [ -d .boucle ] && export BOUCLE_HOME="$PWD/.boucle"
+          $BOUCLE_HOME/bin/boucle-ci e2e
+      - name: Upload agent transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boucle-agent-log-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .boucle/**/agent-output.log
+            .boucle-state/**/agent-output.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ── doctor: periodic recovery (schedule) ──────────────────────────────────────
+  doctor:
+    runs-on: ubuntu-latest
+    continue-on-error: true  # boucle manages its own retries — exit 1 is normal (dispatch ABORT, reviewer re-trigger, etc.)
+    if: |
+      github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch' && github.event.inputs.BOUCLE_ROLE == 'doctor')
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Setup
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl jq git
+          npm install -g glab 2>/dev/null || true
+          # Install jcode coding agent (standalone Rust binary)
+          JCODE_VER="${JCODE_VERSION:-v0.75.3}"
+          if ! command -v jcode &>/dev/null || ! jcode --version 2>/dev/null | grep -q "$JCODE_VER"; then
+            echo "Installing jcode coding agent (standalone binary, $JCODE_VER)..."
+            mkdir -p "$HOME/.local/bin"
+            JCODE_TMP="/tmp/jcode-${GITHUB_RUN_ID:-local}"
+            curl -fsSL "https://github.com/1jehuang/jcode/releases/download/${JCODE_VER}/jcode-linux-x86_64.tar.gz" -o "$JCODE_TMP.tar.gz"
+            mkdir -p "$JCODE_TMP"
+            tar xzf "$JCODE_TMP.tar.gz" -C "$JCODE_TMP"
+            mv "$JCODE_TMP/jcode-linux-x86_64.bin" "$HOME/.local/bin/jcode"
+            chmod +x "$HOME/.local/bin/jcode"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Self-update
+        run: |
+          [ "${BOUCLE_UPDATE_DISABLE:-false}" = "true" ] && exit 0
+          [ -d .boucle/bin ] || exit 0
+          [ "${BOUCLE_PIPELINE_SOURCE:-}" = "push" ] && exit 0
+          case "$GITHUB_REF" in
+            refs/heads/*) _BRANCH="${GITHUB_REF#refs/heads/}" ;;
+            *) exit 0 ;;
+          esac
+          [ "$_BRANCH" = "$BOUCLE_DEFAULT_BRANCH" ] || exit 0
+          bash "$PWD/.boucle/bin/update" || echo "[boucle] WARN: self-update failed, continuing with current version" >&2
+      - name: Doctor
+        run: |
+          export BOUCLE_PROJECT_ID="${{ github.repository }}"
+          [ -d .boucle ] && export BOUCLE_HOME="$PWD/.boucle"
+          $BOUCLE_HOME/bin/boucle-ci doctor

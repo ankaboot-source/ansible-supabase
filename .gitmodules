@@ -1,0 +1,3 @@
+[submodule ".boucle"]
+	path = .boucle
+	url = https://github.com/ankaboot-source/boucle.git
