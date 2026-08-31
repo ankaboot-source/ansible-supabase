@@ -65,12 +65,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    depends_on:
-      {% if studio_enabled | default(true) | bool %}
+{% if studio_enabled | default(true) | bool %}    depends_on:
       studio:
         condition: service_healthy
-      {% endif %}
-    ports:
+{% endif %}    ports:
       - ${KONG_HTTP_PORT}:8000/tcp
       - ${KONG_HTTPS_PORT}:8443/tcp
     volumes:
@@ -348,25 +346,22 @@ services:
 {% endif %}
 
 
-  {% if storage_enabled | default(true) | bool %}
-  # To use S3 backed storage: docker compose -f docker-compose.yml -f docker-compose.s3.yml up
+{% if storage_enabled | default(true) | bool %}  # To use S3 backed storage: docker compose -f docker-compose.yml -f docker-compose.s3.yml up
   storage:
     container_name: supabase-storage{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     image: {{ sb_storage_version }}
     restart: unless-stopped
-    depends_on:
+{% if storage_enabled | default(true) | bool %}    depends_on:
       db:
         # Disable this if you are using an external Postgres database
         condition: service_healthy
-      {% if rest_enabled | default(true) | bool %}
-      rest:
+{% if rest_enabled | default(true) | bool %}      rest:
         condition: service_started
-      {% endif %}
-      {% if imgproxy_enabled | default(true) | bool %}
-      imgproxy:
+{% endif %}
+{% if imgproxy_enabled | default(true) | bool %}      imgproxy:
         condition: service_started
-      {% endif %}
-    healthcheck:
+{% endif %}
+{% endif %}    healthcheck:
       test:
         [
           "CMD",
