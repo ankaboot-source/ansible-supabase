@@ -1,6 +1,7 @@
 name: supabase
 
 services:
+{% if studio_enabled | default(true) | bool %}
   studio:
     container_name: supabase-studio{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     image: {{ sb_studio_version }}
@@ -49,6 +50,7 @@ services:
     volumes:
       - ./volumes/snippets:/app/snippets:z
       - ./volumes/functions:/app/edge-functions:ro,z
+{% endif %}
 
   kong:
     container_name: supabase-kong{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
@@ -64,8 +66,10 @@ services:
       timeout: 5s
       retries: 5
     depends_on:
+      {% if studio_enabled | default(true) | bool %}
       studio:
         condition: service_healthy
+      {% endif %}
     ports:
       - ${KONG_HTTP_PORT}:8000/tcp
       - ${KONG_HTTPS_PORT}:8443/tcp
@@ -98,6 +102,7 @@ services:
       KONG_PORT_MAPS: "443:8000"
     entrypoint: ["/bin/sh", "/home/kong/kong-entrypoint.sh"]
 
+{% if auth_enabled | default(true) | bool %}
 
   auth:
     container_name: supabase-auth{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
@@ -260,7 +265,9 @@ services:
       # GOTRUE_HOOK_SEND_EMAIL_ENABLED: "false"
       # GOTRUE_HOOK_SEND_EMAIL_URI: "http://host.docker.internal:54321/functions/v1/email_sender"
       # GOTRUE_HOOK_SEND_EMAIL_SECRETS: "v1,whsec_VGhpcyBpcyBhbiBleGFtcGxlIG9mIGEgc2hvcnRlciBCYXNlNjQgc3RyaW5n"
+{% endif %}
 
+{% if rest_enabled | default(true) | bool %}
   rest:
     container_name: supabase-rest{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     image: {{ sb_rest_version }}
@@ -295,7 +302,9 @@ services:
       [
         "postgrest"
       ]
+{% endif %}
 
+{% if realtime_enabled | default(true) | bool %}
   realtime:
     # This container name looks inconsistent but is correct because realtime constructs tenant id by parsing the subdomain
     container_name: realtime-dev.supabase-realtime
@@ -336,8 +345,10 @@ services:
       SEED_SELF_HOST: "true"
       RUN_JANITOR: "true"
       DISABLE_HEALTHCHECK_LOGGING: "true"
+{% endif %}
 
 
+  {% if storage_enabled | default(true) | bool %}
   # To use S3 backed storage: docker compose -f docker-compose.yml -f docker-compose.s3.yml up
   storage:
     container_name: supabase-storage{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
@@ -347,10 +358,14 @@ services:
       db:
         # Disable this if you are using an external Postgres database
         condition: service_healthy
+      {% if rest_enabled | default(true) | bool %}
       rest:
         condition: service_started
+      {% endif %}
+      {% if imgproxy_enabled | default(true) | bool %}
       imgproxy:
         condition: service_started
+      {% endif %}
     healthcheck:
       test:
         [
@@ -397,7 +412,9 @@ services:
       S3_PROTOCOL_ACCESS_KEY_SECRET: ${S3_PROTOCOL_ACCESS_KEY_SECRET}
     volumes:
       - ./volumes/storage:/var/lib/storage:z
+{% endif %}
 
+{% if imgproxy_enabled | default(true) | bool %}
   imgproxy:
     container_name: supabase-imgproxy{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     image: {{ sb_imgproxy_version }}
@@ -420,7 +437,9 @@ services:
       IMGPROXY_USE_ETAG: "true"
       IMGPROXY_AUTO_WEBP: ${IMGPROXY_AUTO_WEBP}
       IMGPROXY_MAX_SRC_RESOLUTION: 16.8
+{% endif %}
 
+{% if meta_enabled | default(true) | bool %}
   meta:
     container_name: supabase-meta{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     image: {{ sb_meta_version }}
@@ -437,7 +456,9 @@ services:
       PG_META_DB_USER: postgres
       PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
       CRYPTO_KEY: ${PG_META_CRYPTO_KEY}  
+{% endif %}
 
+{% if functions_enabled | default(true) | bool %}
   functions:
     container_name: supabase-edge-functions{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     image: {{ sb_functions_version }}
@@ -473,6 +494,7 @@ services:
         "--main-service",
         "/home/deno/functions/main"
       ]
+{% endif %}
 
 
 
@@ -569,6 +591,7 @@ services:
   # Update the DATABASE_URL if you are using an external Postgres database
 
 
+{% if supavisor_enabled | default(true) | bool %}
   supavisor:
     container_name: supabase-pooler{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}
     image: {{ sb_supavisor_version }}
@@ -631,6 +654,7 @@ services:
         "-c",
         "/app/bin/migrate && /app/bin/supavisor eval \"$$(cat /etc/pooler/pooler.exs)\" && /app/bin/server"
       ]
+{% endif %}
 
 volumes:
   db-config:

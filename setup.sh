@@ -342,6 +342,15 @@ log_drain="$(cfg_get "required.enable_logging")"
 [[ -z "$log_drain" ]] && log_drain="true"
 set_env_var "log_drain_enabled" "$log_drain"
 
+# Supabase services — toggle each on/off before deploying. Defaults to true when
+# the field is missing so upgraded configs keep every service. db and kong are
+# always required and have no toggle (they are not read nor listed here).
+for svc in auth rest realtime storage imgproxy functions studio meta supavisor; do
+  val="$(cfg_get "required.services.${svc}")"
+  [[ -z "$val" ]] && val="true"
+  set_env_var "${svc}_enabled" "$val"
+done
+
 # docker_users is a list; the template has `- changeit` under it. Replace the
 # first list item line (do NOT touch the `docker_users:` key — it must stay a list).
 sed -i "s|^  - changeit.*|  - $(cfg_get "required.deploy_user")|" "$ENV_FILE"
