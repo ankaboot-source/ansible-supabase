@@ -7,3 +7,14 @@ agent_key_pub_path: /etc/supabase/agent_ed25519.pub
 agent_binary: /usr/local/bin/supabase-agent
 info_binary: /usr/local/bin/supabase-selfhosted
 agent_key_comment: supabase-agent
+
+# Dedicated PostgreSQL role the supabase-agent MCP connects as. It is provisioned
+# by the sql file in this role and granted SELECT on every schema, so the DB
+# itself enforces read-only (not just the MCP server's own SQL filtering).
+agent_reader_role: agent_reader
+# Superuser used to provision agent_reader (must be able to CREATE ROLE and set
+# default privileges on behalf of other owning roles).
+agent_reader_db_admin: supabase_admin
+# DB container name (suffixed by deploy_env when set, matching the compose stack
+# and the instance manifest).
+agent_reader_db_container: "supabase-db{{ '-' + deploy_env if deploy_env != 'changeit' else '' }}"

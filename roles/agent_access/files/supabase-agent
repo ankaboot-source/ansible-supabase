@@ -25,6 +25,12 @@ PROTOCOL_VERSION = "2024-11-05"
 MANIFEST_ENV = "SUPABASE_INSTANCE_MANIFEST"
 DEFAULT_MANIFEST = "/etc/supabase/instance.json"
 
+# Dedicated read-only Postgres role the agent connects as. Provisioned by
+# roles/agent_access (agent_reader.sql). Grants SELECT on every schema and
+# auto-covers future tables via ALTER DEFAULT PRIVILEGES, so the DATABASE
+# rejects writes — this is the security boundary, not the SQL regex below.
+AGENT_DB_ROLE = "agent_reader"
+
 # Tools that are blocked in the `query` tool. Word-boundary match,
 # case-insensitive. Safety guard, not a security boundary.
 _FORBIDDEN_SQL = [
@@ -96,9 +102,26 @@ def _db_container(manifest: Dict[str, Any]) -> str:
 
 
 def _psql(db: str, sql: str, flags: Tuple[str, ...] = ("-c",)) -> Tuple[int, str, str]:
+    """Run a query as the dedicated read-only role.
+
+    Connects as AGENT_DB_ROLE (provisioned with SELECT-only grants), never the
+    postgres superuser. Every SQL statement is additionally wrapped in
+    `BEGIN; SET TRANSACTION READ ONLY;` so the database engine itself rejects
+    any write — even a write the role's grants would have allowed. This is the
+    primary security boundary; the regex filtering in the tools is only a fast
+    front-door guard."""
+    wrapped = f"BEGIN; SET TRANSACTION READ ONLY; {sql} COMMIT;"
     return _run([
         "docker", "exec", db, "psql",
-        "-U", "postgres", "-d", "postgres", *flags, sql,
+        "-U", AGENT_DB_ROLE, "-d", "postgres", *flags, wrapped,
+    ])
+
+
+def _describe(db: str, table: str) -> Tuple[int, str, str]:
+    """Describe a table using the psql meta-command (inherently read-only)."""
+    return _run([
+        "docker", "exec", db, "psql",
+        "-U", AGENT_DB_ROLE, "-d", "postgres", "-c", f"\\d {table}",
     ])
 
 
@@ -116,7 +139,7 @@ def tool_describe_table(args: Dict[str, Any], manifest: Dict[str, Any]) -> Dict[
     table = str(args.get("table", "")).strip()
     if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$", table):
         return _tool_error("invalid table name (use [schema.]table, alnum + underscore)")
-    rc, out, err = _psql(_db_container(manifest), f"\\d {table}")
+    rc, out, err = _describe(_db_container(manifest), f"\\d {table}")
     if rc != 0:
         return _tool_error(f"describe failed (rc={rc}): {err.strip()}")
     return _tool_text(out)
