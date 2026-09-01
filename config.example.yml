@@ -45,6 +45,21 @@ required:
   # Set to false if you don't want Supabase log drain logging inside the dashboard.
   enable_logging: true
 
+  # Supabase services — toggle each on/off before deploying.
+  # db (Postgres) and kong (API gateway) are always required and are not listed.
+  # Disabling a service also removes its depends_on edges; Kong routes for a
+  # disabled service remain defined (they will 502 until the service is enabled).
+  services:
+    auth: true        # GoTrue (email/phone/OAuth sign-in)
+    rest: true        # PostgREST (/rest/v1 REST API, /graphql/v1)
+    realtime: true    # Realtime (websockets)
+    storage: true     # Storage API (file storage)
+    imgproxy: true    # Image transformation (used by storage)
+    functions: true   # Edge Functions
+    studio: true      # Dashboard (Studio)
+    meta: true        # pg-meta (Studio SQL editor / schema)
+    supavisor: true   # Connection pooler (port 6543)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECRETS  —  Cryptographic keys for Supabase internals.

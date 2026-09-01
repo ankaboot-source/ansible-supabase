@@ -54,6 +54,19 @@ kong_conf_path: volumes/api
 # docker-compose-logs.yml; set to false to disable log drain in the dashboard.
 log_drain_enabled: true
 
+# Supabase services — toggled by setup.sh from required.services. Each gates
+# the corresponding service in docker-compose-supabase.yml.j2. db (Postgres)
+# and kong (API gateway) are always required and have no toggle here.
+auth_enabled: true
+rest_enabled: true
+realtime_enabled: true
+storage_enabled: true
+imgproxy_enabled: true
+functions_enabled: true
+studio_enabled: true
+meta_enabled: true
+supavisor_enabled: true
+
 # MCP (Model Context Protocol) secure access.
 # The /mcp Kong route is restricted to these IPs only. Docker source-NATs
 # host-originated connections to the bridge gateway IP (172.28.0.1 - see the
