@@ -26,31 +26,29 @@ BEGIN
 END
 $$;
 
--- 2. USAGE on every schema the agent should be able to read.
---    Without USAGE, the SELECT grants below are useless.
-GRANT USAGE ON SCHEMA
-  public,
-  auth,
-  storage,
-  realtime,
-  graphql,
-  vault,
-  _analytics,
-  supabase_functions
-  TO agent_reader;
-
--- 3. One-time catch-up: grant SELECT on all CURRENT tables in those schemas, so
---    tables that already exist (created before this role was provisioned) are
---    readable. This covers both Supabase's system schemas and any pre-existing
---    public tables.
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO agent_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA auth TO agent_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA storage TO agent_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA realtime TO agent_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA graphql TO agent_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA vault TO agent_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA _analytics TO agent_reader;
-GRANT SELECT ON ALL TABLES IN SCHEMA supabase_functions TO agent_reader;
+-- 2. USAGE + SELECT on every schema the agent should be able to read.
+--    Each grant is issued only for schemas that actually exist, so a deploy
+--    with optional components disabled (e.g. logging off -> no `_analytics`)
+--    does not fail. Grants are idempotent: re-running is a no-op.
+--
+--    IMPORTANT: grants for a single schema must be executed inside the same
+--    conditional, otherwise a single missing schema would abort the whole
+--    batch under ON_ERROR_STOP and leave OTHER schemas ungranted.
+DO $$
+DECLARE s text;
+BEGIN
+  FOREACH s IN ARRAY
+    ARRAY['public','auth','storage','realtime','graphql','vault','_analytics','supabase_functions']
+  LOOP
+    IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = s) THEN
+      -- Without USAGE on the schema, the SELECT grant below is useless.
+      EXECUTE format('GRANT USAGE ON SCHEMA %I TO agent_reader', s);
+      -- One-time catch-up for tables that already exist (created before this
+      -- role was provisioned, or in optional components that are present).
+      EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO agent_reader', s);
+    END IF;
+  END LOOP;
+END $$;
 
 -- 4. Auto-cover EVERY FUTURE table via ALTER DEFAULT PRIVILEGES.
 --    This is the key mechanism: any table created from now on (by an app
@@ -71,16 +69,41 @@ GRANT SELECT ON ALL TABLES IN SCHEMA supabase_functions TO agent_reader;
 --    privileges on behalf of all these roles.
 
 -- postgres (public — normal application DDL)
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO agent_reader;
+DO $$
+BEGIN
+  IF to_regnamespace('public') IS NOT NULL THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO agent_reader';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT SELECT ON TABLES TO agent_reader';
+  END IF;
+END $$;
 
 -- supabase_admin (public RESTORE via migrate.sh; plus system schemas it owns)
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT SELECT ON TABLES TO agent_reader;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT SELECT ON TABLES TO agent_reader;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA vault GRANT SELECT ON TABLES TO agent_reader;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA _analytics GRANT SELECT ON TABLES TO agent_reader;
+DO $$
+BEGIN
+  IF to_regnamespace('graphql') IS NOT NULL THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT SELECT ON TABLES TO agent_reader';
+  END IF;
+  IF to_regnamespace('vault') IS NOT NULL THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA vault GRANT SELECT ON TABLES TO agent_reader';
+  END IF;
+  IF to_regnamespace('_analytics') IS NOT NULL THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA _analytics GRANT SELECT ON TABLES TO agent_reader';
+  END IF;
+END $$;
 
 -- Supabase service roles (their own schemas)
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT SELECT ON TABLES TO agent_reader;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_storage_admin IN SCHEMA storage GRANT SELECT ON TABLES TO agent_reader;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_realtime_admin IN SCHEMA realtime GRANT SELECT ON TABLES TO agent_reader;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_functions_admin IN SCHEMA supabase_functions GRANT SELECT ON TABLES TO agent_reader;
+DO $$
+BEGIN
+  IF to_regnamespace('auth') IS NOT NULL THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT SELECT ON TABLES TO agent_reader';
+  END IF;
+  IF to_regnamespace('storage') IS NOT NULL THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_storage_admin IN SCHEMA storage GRANT SELECT ON TABLES TO agent_reader';
+  END IF;
+  IF to_regnamespace('realtime') IS NOT NULL THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_realtime_admin IN SCHEMA realtime GRANT SELECT ON TABLES TO agent_reader';
+  END IF;
+  IF to_regnamespace('supabase_functions') IS NOT NULL THEN
+    EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE supabase_functions_admin IN SCHEMA supabase_functions GRANT SELECT ON TABLES TO agent_reader';
+  END IF;
+END $$;

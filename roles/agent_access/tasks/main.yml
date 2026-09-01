@@ -27,17 +27,13 @@
 # Runs AFTER the supabase role has brought the DB container up (see playbook
 # ordering: supabase -> manifest -> agent_access). Provisioning uses the
 # supabase_admin superuser (backup/migrate already rely on it being superuser).
-# Idempotent: the role-existence check short-circuits on re-runs.
+#
+# The SQL file is fully idempotent (role created once, grants re-applied as
+# no-ops, missing schemas skipped), so we run it on EVERY deploy. This makes a
+# partially-failed provisioning run (e.g. a one-off error after the role was
+# created) self-heal on the next deploy — if we gated on role existence, a
+# partial failure would leave the role with no grants forever.
 # ---------------------------------------------------------------------------
-
-- name: Check if agent_reader role exists
-  ansible.builtin.command: >
-    docker exec {{ agent_reader_db_container }} psql
-    -U {{ agent_reader_db_admin }} -d postgres -tAc
-    "SELECT 1 FROM pg_roles WHERE rolname='{{ agent_reader_role }}'"
-  register: agent_reader_exists
-  changed_when: false
-  become: true
 
 - name: Stage agent_reader provisioning SQL on host
   ansible.builtin.copy:
@@ -52,11 +48,6 @@
     -U {{ agent_reader_db_admin }} -d postgres -v ON_ERROR_STOP=1 -f - < /tmp/agent_reader.sql
   register: agent_reader_provision
   become: true
-  # Only provision on the FIRST setup — once the role exists, its (SELECT-only)
-  # grants and default privileges are already in place and must NOT be
-  # re-applied (re-running could overwrite nothing, but wastes a round-trip and
-  # risks re-granting on a role the operator deliberately customised).
-  when: agent_reader_exists.stdout | trim != "1"
 
 - name: Clean up staged agent_reader provisioning SQL
   ansible.builtin.file:
@@ -73,7 +64,6 @@
   become: true
   failed_when: false
   changed_when: false
-  when: agent_reader_provision.changed | default(false)
 
 - name: Assert write was rejected by the database
   ansible.builtin.assert:
@@ -84,7 +74,6 @@
       boundary is not enforced by the database — do not proceed.
     success_msg: "Confirmed: the database rejects writes from {{ agent_reader_role }}."
   become: true
-  when: agent_reader_provision.changed | default(false)
 
 # Use community.crypto when present (gives us a `register`able result with
 # .changed) and fall back to a raw ssh-keygen otherwise. The fallback exists
