@@ -506,13 +506,15 @@ existing SSH access (port 22) and requires no new public ports, subdomains, or
 services.
 
 > **Studio MCP vs. the hardened agent MCP.** This section covers the *built-in
-> Studio* MCP at `/mcp` — convenient, but its read-only is **transport-level
-> only** (it runs through Studio's `postgres` superuser connection and has no
-> DB-side read-only mode). For a DB-enforced, genuinely read-only agent
-> endpoint, use the `agent_access` MCP documented in
-> [docs/connect-your-agent.md](connect-your-agent.md): it connects as a
-> dedicated `agent_reader` role whose `SELECT`-only grants and read-only
-> transactions are enforced by Postgres itself.
+> Studio* MCP at `/mcp`. It is **not read-only**: the endpoint runs through
+> Studio's `postgres` superuser connection, and the self-hosted Studio MCP has
+> **no read-only mode** (that's a Cloud/CLI feature only). Restricting it to the
+> SSH tunnel (the `ip-restriction` allow list below) only limits *who can reach
+> it* — an agent connected to it can **write** (`INSERT`/`UPDATE`/`DELETE`/DDL).
+> For a DB-enforced, genuinely read-only agent endpoint, use the `agent_access`
+> MCP documented in [docs/connect-your-agent.md](connect-your-agent.md): it
+> connects as a dedicated `agent_reader` role whose `SELECT`-only grants and
+> read-only transactions are enforced by Postgres itself.
 
 ### How it works
 

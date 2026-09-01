@@ -217,11 +217,14 @@ to an existing custom schema if you don't want to rely on the default
 privileges.
 
 > **Why not use Studio's MCP for the agent?** The built-in Studio MCP
-> (`/mcp` behind Kong) is convenient and works over an SSH tunnel, but its
-> read-only is **transport-level only** — it runs through Studio's `postgres`
-> superuser connection and has no DB-side read-only mode. `agent_access` is
-> the hardened option because read-only is enforced by the role and the
-> read-only transaction, independent of the `postgres` superuser.
+> (`/mcp` behind Kong) is convenient and works over an SSH tunnel, but it is
+> **not read-only** — it runs through Studio's `postgres` superuser connection,
+> and the self-hosted Studio MCP has **no read-only mode** (`read_only=true` is
+> a Cloud/CLI feature only). The SSH-tunnel restriction limits *who can reach
+> the endpoint*, not what it can do: an agent connected to it can write. Use
+> `agent_access` instead when you need a genuinely read-only agent — its
+> read-only is enforced by the `agent_reader` role and the read-only
+> transaction, independent of the `postgres` superuser.
 
 ---
 
