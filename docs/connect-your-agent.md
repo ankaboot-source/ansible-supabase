@@ -1,7 +1,7 @@
 # Connect Your AI Agent
 
 Connect Claude Code, Codex, opencode, or pi to your self-hosted Supabase via
-SSH stdio. The Ansible role `instance-manifest-ssh-agent` provisions a
+SSH stdio. The Ansible role `agent_access` provisions a
 dedicated, command-restricted SSH key on the server. Your agent runs the
 remote command `supabase-agent`, which speaks MCP-over-stdio through the
 authenticated SSH channel.
@@ -14,7 +14,7 @@ the file you put it in differs.
 ## Prerequisites
 
 - The server is already deployed via `ansible-supabase` (the
-  `instance-manifest-ssh-agent` role must have run).
+  `agent_access` role must have run).
 - You have the deployment output: a **private key** and an **SSH config
   block** containing `Host supabase-agent`, `HostName`, `User`, and
   `IdentityFile`.
@@ -183,6 +183,48 @@ does not branch on `uname` and contains no bashisms.
 
 ---
 
+## Security model: read-only is enforced by the database
+
+The `agent_access` MCP server connects to Postgres as a **dedicated read-only
+role (`agent_reader`)**, *not* the `postgres` superuser. This is a
+**database-enforced** boundary, not just SSH or a SQL filter:
+
+- The `agent_reader` role is provisioned with `SELECT`-only grants on every
+  schema (`public`, `auth`, `storage`, `realtime`, `graphql`, `vault`,
+  `_analytics`, `supabase_functions`).
+- Every query the agent runs is additionally wrapped in
+  `BEGIN; SET TRANSACTION READ ONLY; ... COMMIT;`, so Postgres itself rejects
+  any write — `INSERT`, `UPDATE`, `DELETE`, or DDL — even if a grant were
+  misconfigured.
+- New tables created **after** deployment are automatically readable thanks to
+  `ALTER DEFAULT PRIVILEGES` — no cron job or trigger is needed.
+
+### Reading tables in a custom schema
+
+The agent is pre-granted access to the standard Supabase schemas. If you create
+your **own schema** and want the agent to read it, run these as the
+`postgres` (or `supabase_admin`) superuser:
+
+```sql
+GRANT USAGE ON SCHEMA <schema> TO agent_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA <schema> TO agent_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA <schema> GRANT SELECT ON TABLES TO agent_reader;
+```
+
+The `ALTER DEFAULT PRIVILEGES` line makes any **future** table in that schema
+readable too. Repeat the `GRANT ... ON ALL TABLES` line whenever you add tables
+to an existing custom schema if you don't want to rely on the default
+privileges.
+
+> **Why not use Studio's MCP for the agent?** The built-in Studio MCP
+> (`/mcp` behind Kong) is convenient and works over an SSH tunnel, but its
+> read-only is **transport-level only** — it runs through Studio's `postgres`
+> superuser connection and has no DB-side read-only mode. `agent_access` is
+> the hardened option because read-only is enforced by the role and the
+> read-only transaction, independent of the `postgres` superuser.
+
+---
+
 ## Troubleshooting
 
 **`Permission denied (publickey)`**
@@ -208,15 +250,12 @@ Two common causes, both about file modes:
 
 **`bash: supabase-agent: command not found`**
 
-The `instance-manifest-ssh-agent` role did not run successfully on the
-server, or its install task was skipped. Re-run the playbook:
+The `agent_access` role did not run successfully on the
+server, or its install task was skipped. Re-run the full playbook:
 
 ```sh
 ./setup.sh && ./install.sh
 ```
-
-…or re-run the role directly with `ansible-playbook
-playbook-supabase.yml --tags instance-manifest-ssh-agent`.
 
 **MCP server returns non-JSON or hangs**
 

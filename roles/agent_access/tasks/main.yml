@@ -15,6 +15,77 @@
     group: root
     mode: "0755"
 
+# ---------------------------------------------------------------------------
+# Provision the dedicated read-only Postgres role (agent_reader).
+#
+# This is the security boundary that makes the MCP agent DB-side read-only:
+# the supabase-agent connects as this role (not the `postgres` superuser), so
+# the database itself rejects any write — independent of the MCP server's own
+# SQL filtering. The role is granted SELECT across every Supabase schema and
+# future tables are auto-covered via ALTER DEFAULT PRIVILEGES.
+#
+# Runs AFTER the supabase role has brought the DB container up (see playbook
+# ordering: supabase -> manifest -> agent_access). Provisioning uses the
+# supabase_admin superuser (backup/migrate already rely on it being superuser).
+# Idempotent: the role-existence check short-circuits on re-runs.
+# ---------------------------------------------------------------------------
+
+- name: Check if agent_reader role exists
+  ansible.builtin.command: >
+    docker exec {{ agent_reader_db_container }} psql
+    -U {{ agent_reader_db_admin }} -d postgres -tAc
+    "SELECT 1 FROM pg_roles WHERE rolname='{{ agent_reader_role }}'"
+  register: agent_reader_exists
+  changed_when: false
+  become: true
+
+- name: Stage agent_reader provisioning SQL on host
+  ansible.builtin.copy:
+    src: agent_reader.sql
+    dest: /tmp/agent_reader.sql
+    mode: "0600"
+  become: true
+
+- name: Provision agent_reader read-only role
+  ansible.builtin.shell: >
+    docker exec -i {{ agent_reader_db_container }} psql
+    -U {{ agent_reader_db_admin }} -d postgres -v ON_ERROR_STOP=1 -f - < /tmp/agent_reader.sql
+  register: agent_reader_provision
+  become: true
+  # Only provision on the FIRST setup — once the role exists, its (SELECT-only)
+  # grants and default privileges are already in place and must NOT be
+  # re-applied (re-running could overwrite nothing, but wastes a round-trip and
+  # risks re-granting on a role the operator deliberately customised).
+  when: agent_reader_exists.stdout | trim != "1"
+
+- name: Clean up staged agent_reader provisioning SQL
+  ansible.builtin.file:
+    path: /tmp/agent_reader.sql
+    state: absent
+  become: true
+
+- name: Probe that agent_reader cannot write (defense in depth)
+  ansible.builtin.command: >
+    docker exec {{ agent_reader_db_container }} psql
+    -U {{ agent_reader_role }} -d postgres -v ON_ERROR_STOP=1 -c
+    "CREATE TABLE public._agent_ro_probe(id int)"
+  register: agent_reader_write_probe
+  become: true
+  failed_when: false
+  changed_when: false
+  when: agent_reader_provision.changed | default(false)
+
+- name: Assert write was rejected by the database
+  ansible.builtin.assert:
+    that:
+      - agent_reader_write_probe.rc != 0
+    fail_msg: >
+      agent_reader was unexpectedly able to CREATE a table. The read-only
+      boundary is not enforced by the database — do not proceed.
+    success_msg: "Confirmed: the database rejects writes from {{ agent_reader_role }}."
+  become: true
+  when: agent_reader_provision.changed | default(false)
+
 # Use community.crypto when present (gives us a `register`able result with
 # .changed) and fall back to a raw ssh-keygen otherwise. The fallback exists
 # so the role still works on minimal installs that didn't pull in the

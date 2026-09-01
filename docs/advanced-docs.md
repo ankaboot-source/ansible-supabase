@@ -505,6 +505,15 @@ Authorized remote clients connect through an SSH tunnel, which reuses the
 existing SSH access (port 22) and requires no new public ports, subdomains, or
 services.
 
+> **Studio MCP vs. the hardened agent MCP.** This section covers the *built-in
+> Studio* MCP at `/mcp` — convenient, but its read-only is **transport-level
+> only** (it runs through Studio's `postgres` superuser connection and has no
+> DB-side read-only mode). For a DB-enforced, genuinely read-only agent
+> endpoint, use the `agent_access` MCP documented in
+> [docs/connect-your-agent.md](connect-your-agent.md): it connects as a
+> dedicated `agent_reader` role whose `SELECT`-only grants and read-only
+> transactions are enforced by Postgres itself.
+
 ### How it works
 
 ```
