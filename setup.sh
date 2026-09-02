@@ -262,7 +262,7 @@ if [[ $DRY_RUN -eq 1 ]]; then
   log "Would render: $ENV_FILE"
   log "Would update: $PLAYBOOK_FILE"
   log "Components to enable:"
-  for c in caddy monitor fail2ban backup ufw luks; do
+  for c in caddy monitor fail2ban backup ufw luks hardening; do
     if cfg_bool "components.$c"; then
       printf "  + %s\n" "$c"
     fi
@@ -640,6 +640,90 @@ with open(path, 'w') as f:
 PYEOF
 fi
 
+# ─── Security hardening ──────────────────────────────────────────────────────
+# Renders the harden_* vars in env/supabase.yml from advanced.hardening. Each
+# subset has its own toggle (ssh / sysctl / filesystem); values are mapped from
+# the config enums to the yes/no strings the role templates expect. A helper
+# maps a config boolean to an SSH yes/no, inverting where the config expresses
+# "enabled hardening" as true (e.g. password_auth: true -> PasswordAuthentication no).
+hard_fn() { # hard_fn <config-bool> <val-if-true> <val-if-false>
+  if cfg_bool "$1"; then echo "$2"; else echo "$3"; fi
+}
+
+if cfg_bool "components.hardening"; then
+  # --- SSH ---
+  if cfg_bool "advanced.hardening.ssh.enabled"; then
+    set_env_var "harden_ssh_enabled"             "true"
+    set_env_var "harden_ssh_permit_root_login"    "$(hard_fn advanced.hardening.ssh.permit_root_login yes no)"
+    set_env_var "harden_ssh_password_auth"        "$(hard_fn advanced.hardening.ssh.password_auth no yes)"
+    set_env_var "harden_ssh_pubkey_auth"          "yes"
+    set_env_var "harden_ssh_permit_empty_passwords" "no"
+    set_env_var "harden_ssh_max_auth_tries"       "$(cfg_get advanced.hardening.ssh.max_auth_tries)"
+    set_env_var "harden_ssh_login_grace_time"     "$(cfg_get advanced.hardening.ssh.login_grace_time)"
+    set_env_var "harden_ssh_allow_tcp_forwarding" "$(hard_fn advanced.hardening.ssh.allow_tcp_forwarding yes no)"
+    set_env_var "harden_ssh_x11_forwarding"       "$(hard_fn advanced.hardening.ssh.x11_forwarding yes no)"
+    set_env_var "harden_ssh_allow_agent_forwarding" "$(hard_fn advanced.hardening.ssh.allow_agent_forwarding yes no)"
+    set_env_var "harden_ssh_client_alive_interval" "$(cfg_get advanced.hardening.ssh.client_alive_interval)"
+    set_env_var "harden_ssh_client_alive_count_max" "$(cfg_get advanced.hardening.ssh.client_alive_count_max)"
+    set_env_var "harden_ssh_use_dns"              "$(hard_fn advanced.hardening.ssh.use_dns yes no)"
+  fi
+
+  # --- sysctl ---
+  if cfg_bool "advanced.hardening.sysctl.enabled"; then
+    set_env_var "harden_sysctl_enabled" "true"
+    # Build the Docker-safe sysctl key dict from the individual toggles.
+    python3 - "$ENV_FILE" "$CONFIG_FILE" <<'PYEOF'
+import sys, re, yaml
+env_path, cfg_path = sys.argv[1], sys.argv[2]
+with open(cfg_path) as f:
+    cfg = yaml.safe_load(f) or {}
+h = (((cfg.get('advanced') or {}).get('hardening') or {}).get('sysctl')) or {}
+def b(k):
+    v = h.get(k)
+    return '1' if v in (True, 'true', 'True') else '0'
+def nb(k):
+    # inverted: for "drop/disable" toggles the enabling True maps to sysctl 0.
+    v = h.get(k)
+    return '0' if v in (True, 'true', 'True') else '1'
+s = {
+    'net.ipv4.tcp_syncookies': b('tcp_syncookies'),
+    'net.ipv4.conf.all.rp_filter': b('rp_filter'),
+    'net.ipv4.conf.default.rp_filter': b('rp_filter'),
+    'net.ipv4.conf.all.log_martians': b('log_martians'),
+    'net.ipv4.conf.default.log_martians': b('log_martians'),
+    'net.ipv4.conf.all.accept_source_route': nb('drop_source_route'),
+    'net.ipv4.conf.default.accept_source_route': nb('drop_source_route'),
+    'net.ipv4.conf.all.accept_redirects': nb('drop_redirects'),
+    'net.ipv4.conf.default.accept_redirects': nb('drop_redirects'),
+    'net.ipv4.conf.all.send_redirects': nb('drop_redirects'),
+    'net.ipv4.conf.default.send_redirects': nb('drop_redirects'),
+    'net.ipv4.icmp_echo_ignore_broadcasts': b('ignore_broadcast_pings'),
+    'net.ipv4.icmp_ignore_bogus_error_responses': '1',
+    'net.ipv4.tcp_rfc1337': b('rfc1337'),
+    'kernel.randomize_va_space': '2' if h.get('aslr_full') else '0',
+    'kernel.core_uses_pid': b('core_uses_pid'),
+    'fs.suid_dumpable': nb('disable_suid_dumps'),
+}
+with open(env_path) as f:
+    content = f.read()
+block = "\n".join("  %s: %s" % (k, '"%s"' % v) for k, v in s.items())
+content = re.sub(
+    r'(harden_sysctl_keys:\n)(?:  [^\n]*\n?)*',
+    lambda m: m.group(1) + block + "\n",
+    content,
+    count=1,
+)
+with open(env_path, 'w') as f:
+    f.write(content)
+PYEOF
+  fi
+
+  # --- filesystem ---
+  if cfg_bool "advanced.hardening.filesystem.enabled"; then
+    set_env_var "harden_fs_enabled" "true"
+  fi
+fi
+
 ok "env/supabase.yml rendered."
 
 # ─── Write lock file ─────────────────────────────────────────────────────────
@@ -739,6 +823,8 @@ if components.get("fail2ban"):
     role_lines.append("   - fail2ban                # Brute-force protection for Postgres")
 if components.get("backup"):
     role_lines.append("   - backup                  # Automated backups + PITR (pgBackRest)")
+if components.get("hardening"):
+    role_lines.append("   - hardening               # OS security hardening (SSH/sysctl/fs)")
 
 content = bootstrap_play + main_play_header
 if early_role_lines:

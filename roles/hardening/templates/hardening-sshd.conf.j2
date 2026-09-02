@@ -1,0 +1,50 @@
+# Managed by the ansible-supabase `hardening` role. Do not edit by hand.
+# Drop-in under /etc/ssh/sshd_config.d/ — merges with (and can override) the
+# main sshd_config. Kept as a drop-in so disabling the role or editing this
+# file never rewrites the stock config.
+#
+# Each line pairs the applied setting with the threat it mitigates.
+
+# Disallow direct root login. Root can never be brute-forced over SSH; use a
+# sudo-capable unprivileged user instead.
+PermitRootLogin {{ harden_ssh_permit_root_login }}
+
+# Public-key auth is the supported, collision-resistant mechanism.
+PubkeyAuthentication {{ harden_ssh_pubkey_auth }}
+
+# OPT-IN: set to "no" to force key-only login. Blocks password brute-force and
+# credential-stuffing. Leave "yes" until a key is confirmed for the deploy user.
+PasswordAuthentication {{ harden_ssh_password_auth }}
+
+# Never accept blank passwords.
+PermitEmptyPasswords {{ harden_ssh_permit_empty_passwords }}
+
+# Cap auth tries per connection — stops unlimited guessing in one session.
+MaxAuthTries {{ harden_ssh_max_auth_tries }}
+
+# Fail the connection if auth takes longer than this (seconds) — blocks slow,
+# half-open auth-session resource exhaustion.
+LoginGraceTime {{ harden_ssh_login_grace_time }}
+
+# OPT-IN: set AllowTcpForwarding to "no" to block TCP port forwarding. Denies
+# tunnelling out / pivoting from a compromised session. NOTE: does not affect
+# the repo's MCP client-side remote `-L` tunnels.
+AllowTcpForwarding {{ harden_ssh_allow_tcp_forwarding }}
+
+# OPT-IN: set X11Forwarding to "no" to block X11 forwarding — display/content
+# hijack and remote GUI keylogging.
+X11Forwarding {{ harden_ssh_x11_forwarding }}
+
+# OPT-IN: set AllowAgentForwarding to "no" to stop SSH-agent forwarding — SSH
+# private-key theft via a forwarded agent.
+AllowAgentForwarding {{ harden_ssh_allow_agent_forwarding }}
+
+# Send a keepalive every N seconds so dead peers are detected and dropped.
+ClientAliveInterval {{ harden_ssh_client_alive_interval }}
+
+# Drop the session after this many unanswered keepalives — no zombie sessions.
+ClientAliveCountMax {{ harden_ssh_client_alive_count_max }}
+
+# Do not reverse-resolve the connecting host. Avoids reverse-DNS stalls and
+# speeds up authentication.
+UseDNS {{ harden_ssh_use_dns }}

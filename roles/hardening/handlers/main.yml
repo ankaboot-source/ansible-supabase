@@ -1,0 +1,36 @@
+---
+# Handlers for the hardening role.
+
+# SSH: validate the assembled config before restarting so a typo in the drop-in
+# can never lock the administrator out of the server mid-play.
+- name: Validate and restart sshd
+  ansible.builtin.command: sshd -t
+  changed_when: false
+  become: true
+  register: harden_sshd_t
+
+- name: Restart sshd
+  ansible.builtin.service:
+    name: "{{ harden_ssh_service }}"
+    state: restarted
+  become: true
+  when: harden_sshd_t is defined and harden_sshd_t.rc is defined and harden_sshd_t.rc == 0
+
+# Kernel / network: reload sysctl from the rendered file.
+- name: Apply sysctl
+  ansible.builtin.command: sysctl --system
+  become: true
+  changed_when: false
+
+# Filesystem: reload systemd so it picks up the new fstab entry, then remount
+# /dev/shm with the hardened options immediately (no reboot required).
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+- name: Remount /dev/shm hardened
+  ansible.builtin.mount:
+    name: /dev/shm
+    state: remounted
+    opts: nosuid,nodev,noexec,mode=1777
+  become: true

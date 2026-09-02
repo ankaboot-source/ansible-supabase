@@ -1,0 +1,65 @@
+---
+# Hardening role defaults — shared constants. Debian and Ubuntu use identical
+# settings (OpenSSH drop-in dirs, sysctl.d, fstab) so no per-distro override is
+# needed. The role asserts Debian-family and applies the same values to both.
+#
+# User-facing toggles are rendered by setup.sh from config.yml into
+# env/supabase.yml as harden_* vars (extra-vars outrank defaults).
+
+# ── SSH hardening ────────────────────────────────────────────────────────────
+# A drop-in under /etc/ssh/sshd_config.d/ is applied. All values are identical
+# across Debian + Ubuntu.
+harden_ssh_enabled: false
+harden_ssh_permit_root_login: "no"        # What: forbid direct root SSH login.
+                                          # Prevents: brute-forced root, privilege escalation via root creds (use sudo).
+harden_ssh_password_auth: "yes"          # What: allow/disallow password SSH login. OPT-IN to disable (set "no").
+                                          # Prevents (when "no"): password brute-force / cred-stuffing; forces key auth only.
+harden_ssh_pubkey_auth: "yes"            # What: enable public-key auth. The recommended, collision-resistant mechanism.
+harden_ssh_permit_empty_passwords: "no"  # What: never accept a blank password.
+                                          # Prevents: trivial login via passwordless/empty account passwords.
+harden_ssh_max_auth_tries: "3"           # What: cap authentication attempts per connection.
+                                          # Prevents: unlimited password guessing in a single session.
+harden_ssh_login_grace_time: "30"        # What: fail the connection if auth takes >30s.
+                                          # Prevents: slow, half-open auth-session resource exhaustion.
+harden_ssh_allow_tcp_forwarding: "yes"   # What: allow/disallow SSH TCP port forwarding. OPT-IN to disable (set "no").
+                                          # Prevents (when "no"): tunnelling out / pivoting from a compromised session.
+harden_ssh_x11_forwarding: "yes"         # What: allow/disallow X11 forwarding. OPT-IN to disable (set "no").
+                                          # Prevents (when "no"): display/content hijack + remote GUI keylogging.
+harden_ssh_allow_agent_forwarding: "yes" # What: allow/disallow SSH-agent forwarding. OPT-IN to disable (set "no").
+                                          # Prevents (when "no"): SSH private-key theft via a forwarded agent.
+harden_ssh_client_alive_interval: "300"  # What: send a keepalive every 300s to detect dead peers.
+                                          # Prevents: zombie/abandoned sessions holding resources.
+harden_ssh_client_alive_count_max: "2"   # What: drop the session after 2 unanswered keepalives.
+                                          # Prevents: hung connections staying alive indefinitely.
+harden_ssh_use_dns: "no"                 # What: do not reverse-resolve client hostnames.
+                                          # Prevents: reverse-DNS stalls (slow-loris style auth denial) and speeds login.
+# Default SSH service name for the restart handler.
+harden_ssh_service: ssh
+
+# ── Kernel / network sysctl hardening ────────────────────────────────────────
+# Written to /etc/sysctl.d/99-hardening.conf. Only Docker-safe keys: network
+# forwarding (ip_forward) is NEVER set here because Docker/Supabase need it,
+# and IPv6 forwarding is likewise untouched. The pinned compose subnet gateway
+# used by the MCP allow-list is unaffected.
+harden_sysctl_enabled: false
+harden_sysctl_keys:
+  net.ipv4.tcp_syncookies: "1"              # SYN-flood DoS mitigation.
+  net.ipv4.conf.all.rp_filter: "1"          # reverse-path filtering — drops IP spoofing.
+  net.ipv4.conf.default.rp_filter: "1"      # ditto for new interfaces (e.g. containers).
+  net.ipv4.conf.all.log_martians: "1"       # log bogus-source packets (spoof visibility).
+  net.ipv4.conf.default.log_martians: "1"
+  net.ipv4.conf.all.accept_source_route: "0"  # refuse source-routed packets (route-poisoning/MITM).
+  net.ipv4.conf.default.accept_source_route: "0"
+  net.ipv4.conf.all.accept_redirects: "0"   # ignore ICMP redirects (route MITM).
+  net.ipv4.conf.default.accept_redirects: "0"
+  net.ipv4.conf.all.send_redirects: "0"     # never emit ICMP redirects.
+  net.ipv4.conf.default.send_redirects: "0"
+  net.ipv4.icmp_echo_ignore_broadcasts: "1" # not a smurf-amplification DoS reflector.
+  net.ipv4.icmp_ignore_bogus_error_responses: "1"  # drop crafted ICMP errors.
+  net.ipv4.tcp_rfc1337: "1"                 # TIME-WAIT assassination protection.
+  kernel.randomize_va_space: "2"            # full ASLR — RCE exploitation mitigation.
+  kernel.core_uses_pid: "1"                 # name core dumps by crashing PID.
+  fs.suid_dumpable: "0"                     # no core dumps from setuid progs (no privileged-memory leaks).
+
+# ── Filesystem / process hardening ───────────────────────────────────────────
+harden_fs_enabled: false

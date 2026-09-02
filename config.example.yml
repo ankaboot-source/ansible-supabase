@@ -101,6 +101,7 @@ components:
   backup: false     # Automated backups + PITR with pgBackRest (recommended)
   ufw: false        # UFW firewall — allow/deny rules per port
   luks: false       # At-rest disk encryption (LUKS)
+  hardening: false  # SSH + kernel sysctl + filesystem hardening (Debian/Ubuntu)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -216,3 +217,58 @@ advanced:
   luks:
     device: changeit           # e.g. /dev/disk/by-id/YOUR_VOLUME_NAME
     mount_point: /data
+
+  # ── Security hardening ── (only if components.hardening: true)
+  # Applies best-practice hardening to the host OS (Debian/Ubuntu). Each subset
+  # is OFF unless explicitly enabled below — enabling the role alone changes
+  # nothing. Every item is commented with what it does and what it mitigates.
+  # See docs/advanced-docs.md -> "Security Hardening".
+  hardening:
+    # Disable root SSH login, cap auth tries, harden timeouts, and (opt-in)
+    # force key-only login + disable forwarding. Written as a drop-in under
+    # /etc/ssh/sshd_config.d/ + a config validation before restart so a typo
+    # can never lock you out.
+    ssh:
+      enabled: false
+      # Forbid direct root login. Root can never be brute-forced over SSH —
+      # use your sudo-capable deploy_user.
+      permit_root_login: false
+      # OPT-IN: set true to force key-only login. Blocks password brute-force
+      # and credential-stuffing. Keep false until a key is confirmed.
+      password_auth: false
+      max_auth_tries: 3         # cap auth attempts per connection
+      login_grace_time: 30      # fail connection if auth takes >30s
+      # OPT-IN: set true to block TCP port forwarding (deny pivoting/tunnelling
+      # out of a compromised session). Does NOT break the MCP client -L tunnels.
+      allow_tcp_forwarding: false
+      # OPT-IN: block X11 forwarding (display/content hijack).
+      x11_forwarding: false
+      # OPT-IN: block SSH-agent forwarding (private-key theft).
+      allow_agent_forwarding: false
+      client_alive_interval: 300  # keepalive every 300s
+      client_alive_count_max: 2   # drop session after 2 unanswered keepalives
+      use_dns: false              # skip reverse-DNS (anti-slow-loris, faster login)
+
+    # Kernel / network hardening via /etc/sysctl.d/99-hardening.conf. Only
+    # Docker-safe keys are set: ip_forward and IPv6 forwarding are NEVER touched
+    # (the Supabase stack and its pinned 172.28.0.0/16 subnet need them).
+    sysctl:
+      enabled: false
+      tcp_syncookies: true        # mitigate SYN-flood DoS
+      rp_filter: true             # drop IP spoofing (reverse-path filtering)
+      log_martians: true          # log bogus source addresses (spoof visibility)
+      drop_source_route: true     # refuse source-routed packets (route MITM)
+      drop_redirects: true        # ignore/send-no ICMP redirects (route MITM)
+      ignore_broadcast_pings: true # not a smurf-amplification DoS reflector
+      rfc1337: true               # harden TIME_WAIT (connection-reset tricks)
+      aslr_full: true             # kernel.randomize_va_space=2 (RCE mitigation)
+      disable_suid_dumps: true    # fs.suid_dumpable=0 (no privileged-memory dumps)
+      core_uses_pid: true         # name core dumps by crashing PID
+
+    # Filesystem hardening — currently hardens /dev/shm only. Safe for the
+    # stack: Supabase/monitor containers use their OWN in-container /dev/shm,
+    # never the host mount. /tmp and /var/tmp are intentionally excluded (apt,
+    # dpkg and Ansible execute temp scripts there).
+    filesystem:
+      enabled: false
+      noexec_shm: true            # /dev/shm noexec,nosuid,nodev (drop-in in fstab)

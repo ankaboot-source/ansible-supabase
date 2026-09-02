@@ -172,7 +172,7 @@ fill_required "$d"
 run_setup_rc "$d" --yes
 if [[ $RC -eq 0 ]]; then
   # No advanced role should be enabled (uncommented) by default.
-  if grep -Eq '^[[:space:]]*-[[:space:]]+(caddy|monitor|fail2ban|backup|ufw|role:[[:space:]]*luks)\b' "$d/playbook-supabase.yml"; then
+  if grep -Eq '^[[:space:]]*-[[:space:]]+(caddy|monitor|fail2ban|backup|ufw|hardening|role:[[:space:]]*luks)\b' "$d/playbook-supabase.yml"; then
     fail "some advanced roles were enabled unexpectedly"
     cat "$d/playbook-supabase.yml"
   else
