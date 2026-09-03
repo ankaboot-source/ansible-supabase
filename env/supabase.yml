@@ -352,3 +352,52 @@ mount_options: "defaults,noatime,nofail"
 # Nothing has ever deployed with encryption on (the role could not format a
 # volume until now), so there is no existing layout to migrate.
 supabase_data_path: "{{ luks_mount_point ~ '/pgdata' if supabase_encryption.enabled else '/var/lib/supabase/data' }}"
+
+#############
+# HARDENING #
+#############
+# Rendered by setup.sh from components.hardening + advanced.hardening. Debian
+# and Ubuntu use identical settings, so no per-distro config is needed. Defaults
+# reflect the shipped config; setup.sh overrides them when the component is
+# enabled.
+
+# Master toggles (each subset is independent).
+harden_ssh_enabled: false
+harden_sysctl_enabled: false
+harden_fs_enabled: false
+
+# SSH drop-in values ("yes"/"no"). permit_root_login=false maps to "no" (deny
+# root); password_auth=true maps to "no" (force key-only; OPT-IN); forwarding
+# options true=>"yes".
+harden_ssh_permit_root_login: "no"
+harden_ssh_password_auth: "yes"
+harden_ssh_pubkey_auth: "yes"
+harden_ssh_permit_empty_passwords: "no"
+harden_ssh_max_auth_tries: "3"
+harden_ssh_login_grace_time: "30"
+harden_ssh_allow_tcp_forwarding: "yes"
+harden_ssh_x11_forwarding: "yes"
+harden_ssh_allow_agent_forwarding: "yes"
+harden_ssh_client_alive_interval: "300"
+harden_ssh_client_alive_count_max: "2"
+harden_ssh_use_dns: "no"
+
+# Docker-safe sysctl keys (ip_forward / IPv6 forwarding intentionally absent).
+harden_sysctl_keys:
+  net.ipv4.tcp_syncookies: "1"
+  net.ipv4.conf.all.rp_filter: "1"
+  net.ipv4.conf.default.rp_filter: "1"
+  net.ipv4.conf.all.log_martians: "1"
+  net.ipv4.conf.default.log_martians: "1"
+  net.ipv4.conf.all.accept_source_route: "0"
+  net.ipv4.conf.default.accept_source_route: "0"
+  net.ipv4.conf.all.accept_redirects: "0"
+  net.ipv4.conf.default.accept_redirects: "0"
+  net.ipv4.conf.all.send_redirects: "0"
+  net.ipv4.conf.default.send_redirects: "0"
+  net.ipv4.icmp_echo_ignore_broadcasts: "1"
+  net.ipv4.icmp_ignore_bogus_error_responses: "1"
+  net.ipv4.tcp_rfc1337: "1"
+  kernel.randomize_va_space: "2"
+  kernel.core_uses_pid: "1"
+  fs.suid_dumpable: "0"

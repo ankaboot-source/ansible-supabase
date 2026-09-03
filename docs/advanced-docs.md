@@ -20,6 +20,7 @@ This document covers all optional roles and advanced configuration beyond the mi
 - [Backups (pgBackRest)](#backups-pgbackrest)
 - [Fail2ban](#fail2ban)
 - [UFW Firewall](#ufw-firewall)
+- [Security Hardening](#security-hardening)
 - [Secure MCP Remote Access](#secure-mcp-remote-access)
 - [Customizing Supabase](#customizing-supabase)
 - [Full Environment Variable Reference](#full-environment-variable-reference)
@@ -46,6 +47,7 @@ The playbook ships with only `docker` and `supabase` enabled by default. To acti
    - monitor                 # Grafana + Prometheus + Loki stack
    - fail2ban                # Brute-force protection for Postgres
    - backup                  # Automated S3-compatible backups
+   - hardening               # OS hardening — SSH / kernel sysctl / filesystem
 ```
 
 ---
@@ -493,6 +495,58 @@ firewall_deny:
 | `port: 80` | Allow/deny from any IP |
 | `port: 5432` + `ip: 1.2.3.4` | Allow/deny from specific IP |
 | `port: 5432` + `ip: 1.2.3.0` + `cidr: 24` | Allow/deny from CIDR range |
+
+---
+
+## Security Hardening
+
+Applies best-practice host OS hardening for **Debian and Ubuntu**. Enable it with:
+
+```yaml
+components:
+  hardening: true
+```
+
+Every subset is **off until explicitly enabled** under `advanced.hardening` — turning the component on alone changes nothing. Each item is annotated with what it applies and the threat it mitigates. The role fails fast on any non-Debian-family distro; Debian and Ubuntu use identical settings, so no per-distro config is needed.
+
+### SSH (`advanced.hardening.ssh`)
+
+Written as a drop-in at `/etc/ssh/sshd_config.d/hardening.conf`, which merges with the stock config (never rewrites it). Before the daemon restarts, the role runs `sshd -t` so a malformed value can never lock you out.
+
+| Setting | Effect / mitigates |
+|---------|--------------------|
+| `permit_root_login: false` | Forbid direct root SSH login — root can't be brute-forced (use your sudo-capable `deploy_user`). |
+| `password_auth: false` → **OPT-IN** | Force key-only login. Blocks password brute-force and credential-stuffing. Keep `false` until a key is confirmed. |
+| `max_auth_tries` | Cap auth attempts per connection — stops unlimited guessing in one session. |
+| `login_grace_time` | Fail the connection if auth takes too long — blocks slow, half-open auth-session exhaustion. |
+| `allow_tcp_forwarding: false` → OPT-IN | Block TCP port forwarding — denies pivoting/tunnelling out of a compromised session. **Does not** break the MCP client-side `-L` tunnels. |
+| `x11_forwarding: false` → OPT-IN | Block X11 forwarding — display/content hijack and remote GUI keylogging. |
+| `allow_agent_forwarding: false` → OPT-IN | Block SSH-agent forwarding — SSH private-key theft via a forwarded agent. |
+| `client_alive_interval` / `client_alive_count_max` | Drop dead/abandoned sessions — no zombie connections holding resources. |
+| `use_dns: false` | Skip reverse-DNS on connect — prevents reverse-DNS stalls and speeds login. |
+
+### Kernel / network (`advanced.hardening.sysctl`)
+
+Written to `/etc/sysctl.d/99-hardening.conf`. **Only Docker-safe keys are set:** `net.ipv4.ip_forward` and IPv6 forwarding are deliberately never touched (the Supabase stack and its pinned `172.28.0.0/16` subnet depend on them).
+
+| Toggle | sysctl key | Effect / mitigates |
+|--------|------------|--------------------|
+| `tcp_syncookies` | `net.ipv4.tcp_syncookies = 1` | SYN-flood (connection-exhaustion) DoS mitigation. |
+| `rp_filter` | `net.ipv4.conf.*.rp_filter = 1` | Reverse-path filtering — drops IP spoofing. |
+| `log_martians` | `net.ipv4.conf.*.log_martians = 1` | Logs bogus source addresses for spoof visibility. |
+| `drop_source_route` | `accept_source_route = 0` | Refuses source-routed packets (route-poisoning / MITM). |
+| `drop_redirects` | `accept_redirects = 0`, `send_redirects = 0` | Ignores/never emits ICMP redirects (route MITM). |
+| `ignore_broadcast_pings` | `icmp_echo_ignore_broadcasts = 1` | Not a smurf-amplification DoS reflector. |
+| `rfc1337` | `tcp_rfc1337 = 1` | TIME_WAIT assassination (connection-reset tricks). |
+| `aslr_full` | `randomize_va_space = 2` | Full ASLR — RCE exploitation mitigation. |
+| `disable_suid_dumps` | `fs.suid_dumpable = 0` | No core dumps from setuid programs (no privileged-memory leaks). |
+| `core_uses_pid` | `kernel.core_uses_pid = 1` | Names core dumps by crashing PID. |
+
+### Filesystem (`advanced.hardening.filesystem`)
+
+Currently hardens **`/dev/shm`** only (`noexec,nosuid,nodev` via `/etc/fstab`). This is safe for the stack: Supabase and monitor containers use their **own** in-container `/dev/shm`, never the host mount. `/tmp` and `/var/tmp` are **intentionally excluded** — apt/dpkg and Ansible execute temporary scripts there, and `noexec` on them could break the upgrade/deploy path.
+
+> **Why drop auto-updates?** The inspiro script's `unattended-upgrades` was intentionally left out: it can require a reboot and interfere with the long-running Supabase/monitor services, defeating the "don't disrupt the running stack" goal of this role.
 
 ---
 

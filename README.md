@@ -122,6 +122,7 @@ components:
   backup: false           # automated backups + PITR (pgBackRest)
   ufw: false              # firewall
   luks: false             # at-rest disk encryption
+  hardening: false        # OS hardening — enable ssh/sysctl/filesystem sub-sets too
 
 # ─── ADVANCED (only needed when a component is enabled) ──────
 advanced:
@@ -235,7 +236,8 @@ unlock on boot.
 | `vector` | Log pipeline (docker → Logflare) | 9001 (internal) |
 
 Plus the security and monitoring stack: **Caddy** (reverse proxy + TLS + SSO), **UFW**
-firewall, **Fail2ban**, and **Grafana / Prometheus / Loki**. Logflare + Vector
+firewall, **Fail2ban**, **Security Hardening** (SSH/sysctl/filesystem), and
+**Grafana / Prometheus / Loki**. Logflare + Vector
 (the Studio log drain) start when `required.enable_logging: true` (default); set
 it to `false` to skip them.
 
@@ -340,6 +342,31 @@ advanced:
 
 Then re-run `sudo bash setup.sh` — it regenerates `playbook-supabase.yml` from the
 component toggles, so there is nothing to uncomment by hand.
+
+### Security Hardening
+
+Hardens the host OS (Debian + Ubuntu) with native tools only. Disables root SSH
+login and hardening timeouts/auth limits, applies Docker-safe kernel network
+hardening (SYN-cookies, reverse-path filtering, ASLR), and filesystem hardening
+(`noexec` on the world-writable `/dev/shm`). All off by default: you must enable
+the `hardening` component **and** the sub-components (`ssh`, `sysctl`,
+`filesystem`) you want — nothing disruptive runs until you opt in.
+
+```yaml
+components:
+  hardening: true
+advanced:
+  hardening:
+    ssh:
+      enabled: true
+      permit_root_login: false   # forbid direct root SSH login
+    sysctl:
+      enabled: true
+    filesystem:
+      enabled: true
+```
+
+See [docs/advanced-docs.md](docs/advanced-docs.md#security-hardening).
 
 ---
 

@@ -68,6 +68,11 @@ residency requirement you have to evidence, a threat model that goes beyond
 "don't leave the dashboard open", or simply someone accountable for the thing at
 3am.
 
+For an easy, config-driven first step beyond these defaults, enable the
+[`hardening` role](docs/advanced-docs.md#security-hardening) — Disable root SSH
+login, cap auth tries, harden the kernel/network and filesystem — all opt-in,
+off-by-default, and safe for the running Supabase stack.
+
 If that is where you are, **ops@ankaboot.io**. We deploy and operate this stack in
 production and can help with hardening reviews, key management, backup and restore
 drills, and running it for you. Paid work, stated plainly so nobody mistakes this

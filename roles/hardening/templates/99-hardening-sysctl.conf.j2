@@ -1,0 +1,7 @@
+# Managed by the ansible-supabase `hardening` role. Do not edit by hand.
+# Loaded by sysctl before runtime config. Only Docker-safe keys are set here:
+# net.ipv4.ip_forward and IPv6 forwarding are deliberately ABSENT because the
+# Supabase stack (Docker bridge + pinned 172.28.0.0/16 subnet) requires them.
+{% for key, value in harden_sysctl_keys.items() %}
+{{ key }} = {{ value }}
+{% endfor %}

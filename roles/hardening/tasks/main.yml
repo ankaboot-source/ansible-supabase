@@ -1,0 +1,66 @@
+---
+# Security hardening for Debian + Ubuntu hosts.
+#
+# Only the Debian OS family is supported; the role fails fast otherwise. All
+# settings are identical across Debian and Ubuntu (OpenSSH drop-in dirs,
+# sysctl.d, fstab), so a single shared set of defaults suffices.
+#
+# Subsets are independently toggleable (harden_ssh_enabled /
+# harden_sysctl_enabled / harden_fs_enabled), defaulting to off, so enabling the
+# role cannot change anything the user did not explicitly opt into.
+
+- name: Assert Debian-family OS (hardening targets Debian + Ubuntu)
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family == "Debian"
+    fail_msg: "hardening role supports Debian and Ubuntu only (got {{ ansible_os_family }})"
+    success_msg: "hardening role OK on {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SSH hardening
+# ─────────────────────────────────────────────────────────────────────────────
+- name: Render SSH hardening drop-in
+  ansible.builtin.template:
+    src: hardening-sshd.conf.j2
+    dest: /etc/ssh/sshd_config.d/hardening.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: harden_ssh_enabled
+  notify: Validate and restart sshd
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Kernel / network sysctl hardening
+# ─────────────────────────────────────────────────────────────────────────────
+- name: Render Docker-safe sysctl hardening
+  ansible.builtin.template:
+    src: 99-hardening-sysctl.conf.j2
+    dest: /etc/sysctl.d/99-hardening.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: harden_sysctl_enabled
+  notify: Apply sysctl
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Filesystem hardening
+# ─────────────────────────────────────────────────────────────────────────────
+# /dev/shm is hardened via an explicit tmpfs entry in /etc/fstab (lineinfile is
+# idempotent and self-heals on the existing file). Containers are unaffected:
+# Supabase/monitor use their own in-container /dev/shm tmpfs. /tmp and /var/tmp
+# are deliberately NOT hardened (apt/dpkg + Ansible execute temp scripts there).
+- name: Harden /dev/shm mount options in /etc/fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^\s*tmpfs\s+/dev/shm\s'
+    line: 'tmpfs /dev/shm tmpfs defaults,nosuid,nodev,noexec,mode=1777 0 0'
+    state: present
+    create: yes
+    backup: yes
+    mode: '0644'
+  when: harden_fs_enabled
+  register: harden_shm_entry
+  notify:
+    - Apply sysctl
+    - Reload systemd
+    - Remount /dev/shm hardened
