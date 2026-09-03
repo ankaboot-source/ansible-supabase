@@ -433,9 +433,9 @@ Design and test matrix:
 
 This repo exposes **two** MCP endpoints, with different security postures:
 
-- **Studio MCP** (`/mcp` behind Kong) — runs as the `postgres` superuser and has **no
-  read-only mode**; safe transport, but a connected agent can write. Access is via
-  SSH tunnel, below.
+- **Studio MCP** (`/mcp` behind Kong) — Supabase's **default, self-hosted** MCP
+  server. It runs as the `postgres` superuser and has **no read-only mode**; safe
+  transport, but a connected agent can write. Access is via SSH tunnel, below.
 - **Custom `supabase-agent`** — the **DB-enforced read-only** endpoint. It connects
   as a dedicated `agent_reader` role (SELECT-only, never `postgres`), so the
   database itself rejects writes. Connect it via [Connect Your AI Agent](#-connect-your-ai-agent).
