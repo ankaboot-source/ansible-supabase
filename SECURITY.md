@@ -31,9 +31,11 @@ discover them the hard way.
   keys, and backup credentials default to a plaintext `.env`. `creds_source: vault`
   moves the latter into Ansible Vault. File permissions are the only thing
   protecting the former.
-- **Agent access is read-only, not harmless.** The MCP tooling refuses writes and
-  never returns secret values, but read access to a database is still access to the
-  data in it. Grant it to agents you would grant a read replica to.
+- **Agent access is read-only, not harmless.** Read-only is enforced by the
+  database — the MCP connects as a dedicated `agent_reader` role with SELECT-only
+  grants and every query runs in `SET TRANSACTION READ ONLY` — and no MCP tool
+  returns secret values. But read access to a database is still access to the data
+  in it. Grant it to agents you would grant a read replica to.
 - **Migration is one-shot.** `migrate.sh` is read-only against the source and
   refuses a non-empty target, but it has no resumability. A failure means starting
   over.
@@ -67,6 +69,14 @@ a security programme, and some situations need one — a regulated workload, a d
 residency requirement you have to evidence, a threat model that goes beyond
 "don't leave the dashboard open", or simply someone accountable for the thing at
 3am.
+
+- **`agent_reader` — DB-enforced read-only for AI agents.** The custom
+  `supabase-agent` connects to Postgres as a dedicated read-only role (SELECT-only
+  grants across every schema, never the `postgres` superuser), and every query
+  runs in `SET TRANSACTION READ ONLY` — so the database rejects writes independent
+  of server code. New tables are auto-covered via `ALTER DEFAULT PRIVILEGES`;
+  custom schemas are a documented one-liner. This is the read-only surface you'd
+  expose to an agent, distinct from Studio's writable `/mcp`.
 
 For an easy, config-driven first step beyond these defaults, enable the
 [`hardening` role](docs/advanced-docs.md#security-hardening) — Disable root SSH

@@ -171,6 +171,22 @@ container status, and the manifest. No public port, no `service_role` key handed
 and no tool whose output includes secret values. The `supabase-selfhosted info` CLI
 shows real values on a terminal and redacts them the moment its output is piped.
 
+**Read-only is enforced by the database,** not just by the MCP server's own SQL
+filtering.
+The agent connects to Postgres as a dedicated **`agent_reader`** role
+(never the `postgres` superuser)that has SELECT-only grants across every schema
+, and every query runs inside `SET TRANSACTION READ ONLY` — so Postgres itself
+rejects any write, independent of the server code. New tables created later are
+auto-covered via `ALTER DEFAULT PRIVILEGES`. (See
+[docs/connect-your-agent.md](docs/connect-your-agent.md) for the full security model.)
+
+> **`supabase-agent` vs. Studio's `/mcp`.** We ship *two* MCP endpoints. The built-in
+> Studio MCP (`/mcp` behind Kong) is transport-restricted (SSH tunnel + IP allow
+> list)— but **writable**: it runs as the `postgres` superuser and has no read-only
+> mode. Our `supabase-agent` is the **DB-enforced read-only** one — the right choice
+> for an AI agent you can't fully trust. (Studio `/mcp` access: [Secure MCP Remote
+> Access](#-secure-mcp-remote-access).)
+
 Read-only is not the same as harmless — read access to a database is still access to
 the data in it. Give an agent this the way you would give it a read replica.
 
@@ -263,6 +279,18 @@ sh scripts/verify-connection.sh ~/.ssh/supabase-agent-<host> supabase-agent
 ```
 
 The verify script is POSIX-clean and runs on both GNU and BSD userland (Linux + macOS).
+
+**This is the DB-enforced, genuinely read-only MCP** — the agent connects as the
+dedicated `agent_reader` Postgres role (SELECT-only, never the `postgres`
+superuser), so the database itself rejects writes. To point your agent at it, the
+`{command, args}` shape is identical across agents:
+
+```json
+{
+  "command": "ssh",
+  "args": ["supabase-agent", "supabase-agent"]
+}
+```
 
 ### Reading secrets back
 
@@ -419,6 +447,14 @@ Design and test matrix:
 ---
 
 ## 🔒 Secure MCP Remote Access
+
+This section is about the **built-in Studio MCP** (`/mcp` behind Kong, routed to
+Studio's `/api/mcp`). It's convenient and secure to reach, but note that it is
+**writable** — it runs as the `postgres` superuser and has no read-only mode. For a
+DB-enforced, genuinely **read-only** MCP for your AI agent, prefer our custom
+`supabase-agent` instead — see [Connect Your AI Agent](#-connect-your-ai-agent)
+below. (Both endpoints are secure; they differ in *what the connected client can
+write*.)
 
 The Supabase MCP server is exposed at `/mcp` through the Kong gateway (routed to
 Studio's `/api/mcp`). It is **never publicly reachable** — Kong's `ip-restriction`
